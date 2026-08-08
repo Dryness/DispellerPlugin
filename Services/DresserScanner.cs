@@ -70,7 +70,9 @@ public class DresserScanner : IDisposable
 
                 if (itemCount > 0)
                 {
-                    Plugin.Log.Information($"OnFrameworkUpdate: Cached {itemCount} items from dresser (cache was empty: {wasEmpty})");
+                    // UsedSlots should match itemCount - they come from different fields, so a
+                    // mismatch means the struct layout drifted out from under FFXIVClientStructs.
+                    Plugin.Log.Information($"OnFrameworkUpdate: Cached {itemCount} items from dresser (UsedSlots: {usedSlots}, cache was empty: {wasEmpty})");
                 }
             }
         }
@@ -138,7 +140,7 @@ public class DresserScanner : IDisposable
                 // Update the used slots counter to prevent immediate re-trigger
                 _dresserItemSlotsUsed = agent->Data->UsedSlots;
                 
-                Plugin.Log.Information($"TryRefresh: Loaded {itemCount} items from dresser");
+                Plugin.Log.Information($"TryRefresh: Loaded {itemCount} items from dresser (UsedSlots: {_dresserItemSlotsUsed})");
                 return true;
             }
         }
