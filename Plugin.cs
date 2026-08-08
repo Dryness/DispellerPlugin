@@ -43,6 +43,8 @@ public sealed class Plugin : IDalamudPlugin
 
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
+        // No separate settings window, so the installer's gear opens the main UI.
+        PluginInterface.UiBuilder.OpenConfigUi += ToggleMainUi;
 
         Log.Information($"===Dispeller plugin loaded! Ready to find shared models!===");
     }
@@ -51,6 +53,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
+        PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
         
         WindowSystem.RemoveAllWindows();
 
