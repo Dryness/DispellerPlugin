@@ -13,21 +13,12 @@ space at all.
 
 ## Installing
 
-This plugin is not in the official Dalamud repository. To install it, add this URL under
-Dalamud **Settings → Experimental → Custom Plugin Repositories**:
+This plugin is not (and never will be) in the official Dalamud repository. To install it,
+add this URL in Dalamud under **Settings → Experimental → Custom Plugin Repositories**:
 
 ```
 https://raw.githubusercontent.com/Dryness/DispellerPlugin/master/repo.json
 ```
-
-Dispeller then appears in the plugin installer and updates like any other plugin.
-
-Built against **Dalamud API 15**. If your Dalamud is on a different API level it will
-refuse to load, which is expected — see the fork note below.
-
-Alternatively, grab `latest.zip` from
-[Releases](https://github.com/Dryness/DispellerPlugin/releases) and unpack it into your
-`devPlugins/Dispeller/` folder.
 
 ## Usage
 
