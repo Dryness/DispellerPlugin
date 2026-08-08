@@ -141,6 +141,7 @@ public class DresserScanner : IDisposable
                 _dresserItemSlotsUsed = agent->Data->UsedSlots;
                 
                 Plugin.Log.Information($"TryRefresh: Loaded {itemCount} items from dresser (UsedSlots: {_dresserItemSlotsUsed})");
+                LogSlotDistribution(agent->Data);
                 return true;
             }
         }
@@ -149,6 +150,60 @@ public class DresserScanner : IDisposable
             Plugin.Log.Error(ex, "Error in TryRefresh");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Diagnostic for the UsedSlots/itemCount mismatch. The backing array holds 8000 entries
+    /// but the dresser itself caps at 800, so a raw non-zero ItemId count cannot be the real
+    /// figure. This reports how the non-zero entries sit relative to UsedSlots, which tells us
+    /// whether the live items are packed into [0, UsedSlots) or scattered among stale ones.
+    /// </summary>
+    private static unsafe void LogSlotDistribution(MiragePrismPrismBoxData* data)
+    {
+        var items = data->PrismBoxItems;
+        var usedSlots = data->UsedSlots;
+
+        int nonZeroTotal = 0, inUsedRange = 0, beyondUsedRange = 0, highestNonZero = -1;
+        uint minSlot = uint.MaxValue, maxSlot = 0;
+        var distinctItemIds = new HashSet<uint>();
+        var distinctSlotItemPairs = new HashSet<(uint Slot, uint ItemId)>();
+        var beyondSamples = new List<string>();
+
+        for (var i = 0; i < items.Length; i++)
+        {
+            var itemId = items[i].ItemId;
+            if (itemId == 0)
+                continue;
+
+            var slot = items[i].Slot;
+            nonZeroTotal++;
+            highestNonZero = i;
+            distinctItemIds.Add(itemId);
+            distinctSlotItemPairs.Add((slot, itemId));
+            minSlot = Math.Min(minSlot, slot);
+            maxSlot = Math.Max(maxSlot, slot);
+
+            if (i < usedSlots)
+            {
+                inUsedRange++;
+            }
+            else
+            {
+                beyondUsedRange++;
+                if (beyondSamples.Count < 6)
+                    beyondSamples.Add($"[idx {i}] Slot={slot} ItemId={itemId}");
+            }
+        }
+
+        Plugin.Log.Information(
+            $"SlotDistribution: ArrayLength={items.Length} UsedSlots={usedSlots} NonZeroTotal={nonZeroTotal} " +
+            $"InUsedRange={inUsedRange} BeyondUsedRange={beyondUsedRange} HighestNonZeroIndex={highestNonZero}");
+        Plugin.Log.Information(
+            $"SlotDistribution: DistinctItemIds={distinctItemIds.Count} DistinctSlotItemPairs={distinctSlotItemPairs.Count} " +
+            $"SlotRange={(nonZeroTotal == 0 ? "n/a" : $"{minSlot}..{maxSlot}")}");
+
+        if (beyondSamples.Count > 0)
+            Plugin.Log.Information($"SlotDistribution: first beyond UsedSlots -> {string.Join(" | ", beyondSamples)}");
     }
 
     public static bool HasCachedData()
