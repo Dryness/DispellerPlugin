@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Text;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
@@ -66,12 +67,23 @@ public class MainWindow : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
-        // Results display
-        DrawResults();
+        // Results display, sized to leave room for the footer
+        var footerHeight = GetFooterHeight();
+        DrawResults(footerHeight);
 
-        // Footer
+        // Footer, pinned to the bottom edge of the window. Without this the
+        // footer is pushed past the bottom and — because the window is
+        // NoScrollbar — is only reachable with the mouse wheel.
+        ImGui.SetCursorPosY(ImGui.GetWindowHeight() - ImGui.GetStyle().WindowPadding.Y - footerHeight);
         DrawFooter();
     }
+
+    /// <summary>
+    /// Height of everything DrawFooter draws: the separator, its manual 10px
+    /// offset, and one line of text.
+    /// </summary>
+    private static float GetFooterHeight()
+        => 1 + ImGui.GetStyle().ItemSpacing.Y + 10 + ImGui.GetTextLineHeight();
 
     private void DrawHeader()
     {
@@ -152,23 +164,19 @@ public class MainWindow : Window, IDisposable
         ImGui.PopStyleColor();
     }
 
-    private void DrawResults()
+    private void DrawResults(float footerHeight)
     {
+        // Nothing to show yet - DrawStatus already says what state the scan is in.
         if (sharedGroups == null || sharedGroups.Count == 0)
-        {
-            var message = "Click Scan to analyze your glamour dresser!";
-            var centerPos = (ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(message).X) / 2;
-            ImGui.SetCursorPosX(centerPos);
-            
-            ImGui.PushStyleColor(ImGuiCol.Text, BrightWhite);
-            ImGui.TextUnformatted(message);
-            ImGui.PopStyleColor();
             return;
-        }
+
+        // A negative height means "content region avail minus this much", which keeps
+        // the scrolling results area clear of the footer below it.
+        var height = -(footerHeight + ImGui.GetStyle().ItemSpacing.Y);
 
         // ImRaii.Child ends the child unconditionally - ImGui requires EndChild() even
         // when BeginChild() returns false (unlike Begin/End on popups and menus).
-        using var child = ImRaii.Child("Results", Vector2.Zero, false);
+        using var child = ImRaii.Child("Results", new Vector2(0, height), false);
         if (!child)
             return;
 
@@ -196,22 +204,49 @@ public class MainWindow : Window, IDisposable
         {
             ImGui.PopStyleColor(4);
 
-            string? previousModelId = null;
-            foreach (var item in group.Items)
-            {
-                // Visual separator if model changes (items with matching models will be adjacent)
-                if (previousModelId != null && previousModelId != item.ModelId)
-                {
-                    ImGui.Spacing();
-                }
-                previousModelId = item.ModelId;
-                
-                DrawItem(item, group.Items);
-            }
+            DrawModelRuns(group, groupColor);
         }
         else
         {
             ImGui.PopStyleColor(4);
+        }
+    }
+
+    /// <summary>
+    /// Draws a slot's items as runs of a shared model, bracketing each run with a thin
+    /// vertical bar in the slot's own colour. Items are sorted by model ID when the scan
+    /// builds the group, so a run is always a contiguous span.
+    /// </summary>
+    private void DrawModelRuns(SharedModelGroup group, Vector4 groupColor)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        var barColor = ImGui.ColorConvertFloat4ToU32(new Vector4(groupColor.X, groupColor.Y, groupColor.Z, 0.55f));
+        var spacing = ImGui.GetStyle().ItemSpacing.Y;
+
+        for (var start = 0; start < group.Items.Count; )
+        {
+            var end = start;
+            while (end < group.Items.Count && group.Items[end].ModelId == group.Items[start].ModelId)
+                end++;
+
+            var origin = ImGui.GetCursorScreenPos();
+
+            for (var i = start; i < end; i++)
+                DrawItem(group.Items[i], group.Items);
+
+            // The cursor now sits at the start of the next row, one ItemSpacing below
+            // the run's last row.
+            var runBottom = ImGui.GetCursorScreenPos().Y - spacing;
+            drawList.AddRectFilled(
+                new Vector2(origin.X + 8, origin.Y),
+                new Vector2(origin.X + 10, runBottom),
+                barColor,
+                1.0f);
+
+            if (end < group.Items.Count)
+                ImGui.Spacing();
+
+            start = end;
         }
     }
 
@@ -223,8 +258,9 @@ public class MainWindow : Window, IDisposable
         var matchingModelCount = allItemsInSlot.Count(i => i.ModelId == item.ModelId);
         var hasMatchingModels = matchingModelCount > 1;
 
-        // Try to get icon
-        var icon = GetIcon((ushort)item.IconId);
+        // Try to get icon. The dresser's own IconId can be one the game cannot resolve for
+        // HQ entries, so fall back to the icon the Item sheet gives for the base item.
+        var icon = GetIcon((ushort)item.IconId) ?? GetIcon((ushort)GetItemIconFromLumina(item.ItemId));
         if (icon != null)
         {
             ImGui.Image(icon.Handle, new Vector2(32, 32));
@@ -237,9 +273,12 @@ public class MainWindow : Window, IDisposable
             ImGui.SameLine();
         }
 
-        // Get display name - fallback if empty
+        // Get display name - fallback if empty. HQ entries carry the game's own HQ glyph,
+        // since the Item sheet name is identical for both qualities.
         var displayName = string.IsNullOrWhiteSpace(item.Name) ? $"Item #{item.ItemId}" : item.Name;
-        
+        if (item.IsHq)
+            displayName = $"{displayName} {(char)SeIconChar.HighQuality}";
+
         // Add indicator for matching models
         if (hasMatchingModels)
         {
@@ -283,19 +322,19 @@ public class MainWindow : Window, IDisposable
                 drawList.AddCircle(circleCenter, circleRadius + 1, circleColor);
             }
             
-            // Add spacing after circles and create invisible button for tooltip
+            // The invisible button both reserves the circles' width on this line and
+            // gives them a hover target. Do not advance the cursor past it by hand:
+            // ImGui has already wrapped to the next row, so any SetCursorPosX here
+            // indents the *following* item instead of this one.
             var circlesWidth = (item.DyeCount * circleSpacing) + 4;
             ImGui.InvisibleButton($"dye_{item.ItemId}", new Vector2(circlesWidth, circleRadius * 2 + 4));
-            
+
             if (ImGui.IsItemHovered())
             {
                 ImGui.BeginTooltip();
                 ImGui.TextUnformatted($"{item.DyeCount} dye slot{(item.DyeCount > 1 ? "s" : "")} available");
                 ImGui.EndTooltip();
             }
-            
-            // Move cursor past the circles
-            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + circlesWidth);
         }
 
         // Draw Armoire marker if item can be stored in Armoire
@@ -317,10 +356,25 @@ public class MainWindow : Window, IDisposable
         }
     }
 
+    /// <summary>
+    /// GetFromGameIcon throws IconNotFoundException for an icon the game does not have, so
+    /// GetWrapOrDefault never gets the chance to return null. An unresolvable icon must not
+    /// take the whole window's Draw() down with it - DrawItem falls back to a blank space.
+    /// </summary>
     private IDalamudTextureWrap? GetIcon(ushort id)
     {
-        var icon = Plugin.TextureProvider.GetFromGameIcon(new Dalamud.Interface.Textures.GameIconLookup(id)).GetWrapOrDefault();
-        return icon;
+        if (id == 0)
+            return null;
+
+        try
+        {
+            return Plugin.TextureProvider.GetFromGameIcon(new Dalamud.Interface.Textures.GameIconLookup(id)).GetWrapOrDefault();
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.Debug($"No icon {id}: {ex.Message}");
+            return null;
+        }
     }
 
     private void DrawFooter()
@@ -383,21 +437,29 @@ public class MainWindow : Window, IDisposable
                 return;
             }
 
-            // Deduplicate by Slot to prevent duplicates from race conditions. A dresser slot
-            // holds exactly one item, so Slot alone is the identity - keying on Slot + ItemId
-            // would let two different items claiming the same slot through.
+            // Deduplicate by ItemId. Do NOT key on Slot: Slot identifies an outfit set, not a
+            // dresser position - an "Attire" bundle and all nine of its pieces share one Slot,
+            // so grouping by it collapses whole outfits down to a single garment.
             var uniqueItems = dresserItems
-                .GroupBy(item => item.Slot)
+                .GroupBy(item => item.ItemId)
                 .Select(g => g.First())
                 .ToList();
+
+            // Outfit bundles ("... Attire") have no equipment slot of their own, so they can't
+            // be model-matched against garments. Counted here, grouping deferred.
+            var outfitCount = uniqueItems.Count(item => GetSlotName(item.ItemId) == "Outfit");
 
             // Filter out items with unknown slots
             var validItems = uniqueItems
                 .Where(item => {
                     var slotName = GetSlotName(item.ItemId);
-                    return !string.IsNullOrEmpty(slotName) && slotName != "Unknown Slot";
+                    return !string.IsNullOrEmpty(slotName) && slotName != "Unknown Slot" && slotName != "Outfit";
                 })
                 .ToList();
+
+            Plugin.Log.Information($"Scan: {dresserItems.Count} raw, {uniqueItems.Count} unique, {validItems.Count} equippable, {outfitCount} outfits");
+            foreach (var g in uniqueItems.GroupBy(i => GetSlotName(i.ItemId)).OrderBy(g => GetSlotOrder(g.Key)))
+                Plugin.Log.Information($"Scan category {g.Key}: {g.Count()}");
 
             // First, identify items with shared models by grouping by slot + model
             var itemsWithSharedModels = validItems
@@ -414,9 +476,11 @@ public class MainWindow : Window, IDisposable
             var grouped = itemsWithSharedModels
                 .GroupBy(item => GetSlotName(item.ItemId))
                 .Select(g => {
-                    // Sort items within this slot by model ID so matching models are adjacent
+                    // Sort items within this slot by model ID so matching models are adjacent,
+                    // and put the HQ entry at the head of its run.
                     var sortedItems = g
                         .OrderBy(item => GetItemModel(item.ItemId))
+                        .ThenByDescending(item => item.ItemId >= 1_000_000)
                         .Select(item => {
                             // Always get item name from Lumina for accuracy
                             // Dresser name can be incorrect/outdated when dresser updates
@@ -443,7 +507,8 @@ public class MainWindow : Window, IDisposable
                                 Slot = item.Slot,
                                 ModelId = GetItemModel(item.ItemId),
                                 DyeCount = dyeCount,
-                                CanGoInArmoire = canGoInArmoire
+                                CanGoInArmoire = canGoInArmoire,
+                                IsHq = item.ItemId >= 1_000_000
                             };
                         })
                         .ToList();
@@ -477,12 +542,21 @@ public class MainWindow : Window, IDisposable
     private string GetItemModel(uint itemId)
     {
         var sheet = Plugin.DataManager.GetExcelSheet<Item>()!;
-        if (!sheet.TryGetRow(itemId, out var item))
+        if (!sheet.TryGetRow(BaseItemId(itemId), out var item))
             return "Unknown";
 
         var model = ModelDetectionService.ExtractModelInfo(item.ModelMain);
         return ModelDetectionService.GetModelIdString(model);
     }
+
+    /// <summary>
+    /// The dresser stores HQ entries at ItemId + 1,000,000, but the Item sheet only holds the
+    /// base row - so every HQ item failed to resolve and fell through to "Unknown Slot".
+    /// Only sheet lookups are normalised; the raw ItemId stays the dedup identity, so an HQ
+    /// item and its NQ twin remain two dresser entries, which is what the game shows.
+    /// </summary>
+    private static uint BaseItemId(uint itemId)
+        => itemId >= 1_000_000 ? itemId - 1_000_000 : itemId;
 
     private string GetSlotName(uint itemId)
     {
@@ -490,11 +564,16 @@ public class MainWindow : Window, IDisposable
             return "Unknown Slot";
             
         var sheet = Plugin.DataManager.GetExcelSheet<Item>()!;
-        if (!sheet.TryGetRow(itemId, out var item))
+        if (!sheet.TryGetRow(BaseItemId(itemId), out var item))
             return "Unknown Slot";
 
         if (!item.EquipSlotCategory.IsValid)
             return "Unknown Slot";
+
+        // Outfit bundles point at EquipSlotCategory row 0, where every slot field is zero.
+        // They are real dresser entries ("Bunny Attire", "The Emperor's New Attire"), not junk.
+        if (item.EquipSlotCategory.RowId == 0)
+            return "Outfit";
 
         var category = item.EquipSlotCategory.Value;
 
@@ -520,7 +599,7 @@ public class MainWindow : Window, IDisposable
             return "Unknown Item";
             
         var sheet = Plugin.DataManager.GetExcelSheet<Item>()!;
-        if (!sheet.TryGetRow(itemId, out var item))
+        if (!sheet.TryGetRow(BaseItemId(itemId), out var item))
             return "Unknown Item";
         
         return item.Name.ExtractText();
@@ -532,7 +611,7 @@ public class MainWindow : Window, IDisposable
             return 0;
             
         var sheet = Plugin.DataManager.GetExcelSheet<Item>()!;
-        if (!sheet.TryGetRow(itemId, out var item))
+        if (!sheet.TryGetRow(BaseItemId(itemId), out var item))
             return 0;
         
         return item.Icon;
@@ -544,7 +623,7 @@ public class MainWindow : Window, IDisposable
             return 0;
             
         var sheet = Plugin.DataManager.GetExcelSheet<Item>()!;
-        if (!sheet.TryGetRow(itemId, out var item))
+        if (!sheet.TryGetRow(BaseItemId(itemId), out var item))
             return 0;
         
         return item.DyeCount;
@@ -557,7 +636,7 @@ public class MainWindow : Window, IDisposable
             
         // Check if item exists in the Cabinet sheet (Armoire items)
         var cabinetSheet = Plugin.DataManager.GetExcelSheet<Cabinet>()!;
-        return cabinetSheet.Any(row => row.Item.RowId == itemId);
+        return cabinetSheet.Any(row => row.Item.RowId == BaseItemId(itemId));
     }
 
     private int GetSlotOrder(string slotName)
@@ -576,6 +655,7 @@ public class MainWindow : Window, IDisposable
             "Neck" => 9,
             "Wrists" => 10,
             "Ring" => 11,
+            "Outfit" => 12,
             _ => 99
         };
     }
@@ -621,4 +701,5 @@ public class SharedModelItem
     public string ModelId { get; set; } = string.Empty;
     public byte DyeCount { get; set; }
     public bool CanGoInArmoire { get; set; }
+    public bool IsHq { get; set; }
 }
