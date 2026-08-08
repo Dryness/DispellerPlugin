@@ -2,6 +2,8 @@ using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
 using System.Threading;
 
 namespace Dispeller.Services;
@@ -13,11 +15,28 @@ public class DresserScanner : IDisposable
     private static int _dresserItemSlotsUsed = 0;
     private static long _cachedSignature = -1;
     private static int _generation = 0;
+    private static ulong _contentId = 0;
+    private static volatile bool _fromSavedCache = false;
+    private static DateTimeOffset _savedAt;
+
+    /// <summary>
+    /// True when what is cached came off disk and has not been confirmed against the game
+    /// this session. It can be out of date - the dresser may have been used elsewhere, or
+    /// changed while the plugin was disabled - so the window says so.
+    /// </summary>
+    public static bool IsFromSavedCache => _fromSavedCache;
+
+    /// <summary>When the cache on disk was written. Only meaningful while <see cref="IsFromSavedCache"/>.</summary>
+    public static DateTimeOffset SavedAt => _savedAt;
+
+    // The cache is written to disk per character so the dresser doesn't have to be reopened
+    // every session. LocalContentId is the character's own id, which is what makes the file
+    // safe to reuse - the Glamour Dresser belongs to the character, not the account.
+    private const int CacheFormatVersion = 1;
 
     /// <summary>
     /// Bumped every time the cached contents actually change. The window watches this so it
-    /// can rebuild its results when the dresser is opened, re-sorted, or deposited into,
-    /// without the user pressing Scan again.
+    /// can rebuild its results when the dresser is opened, re-sorted, or deposited into.
     /// </summary>
     public static int Generation => Volatile.Read(ref _generation);
 
@@ -40,6 +59,13 @@ public class DresserScanner : IDisposable
     {
         try
         {
+            // Watch the logged-in character rather than the Login event: this also covers
+            // logging out (id 0) and the plugin being enabled mid-session, in one place.
+            // API 15 moved this off IClientState; ContentId is 0 while logged out.
+            var contentId = Plugin.ClientState.IsLoggedIn ? Plugin.PlayerState.ContentId : 0;
+            if (contentId != _contentId)
+                SwitchCharacter(contentId);
+
             var agent = AgentMiragePrismPrismBox.Instance();
             if (agent == null || !agent->IsAddonReady() || agent->Data == null)
             {
@@ -60,6 +86,10 @@ public class DresserScanner : IDisposable
             if (items.Count == 0)
                 return;
 
+            // A successful read confirms the cache against the game, whether or not anything
+            // changed - so the "cached" notice clears even when the saved copy was accurate.
+            _fromSavedCache = false;
+
             var signature = SignatureOf(items);
             lock (LockObject)
             {
@@ -72,12 +102,13 @@ public class DresserScanner : IDisposable
             }
 
             Interlocked.Increment(ref _generation);
+            Save();
             Plugin.Log.Information($"Dresser cache updated: {items.Count} items (generation {Generation})");
         }
         catch
         {
-            // Silently handle exceptions in framework update to avoid spam
-            // Errors will be logged if they occur during manual refresh
+            // Swallowed deliberately: this runs every frame, so a recurring fault would
+            // flood the log. The next poll retries from scratch.
         }
     }
 
@@ -136,73 +167,128 @@ public class DresserScanner : IDisposable
         }
     }
 
-    public static unsafe bool TryRefresh()
+    /// <summary>
+    /// Drops whatever the previous character had cached and picks up the new character's
+    /// saved copy, if there is one. A content id of 0 means logged out - the cache is
+    /// emptied and nothing is loaded.
+    /// </summary>
+    private static void SwitchCharacter(ulong contentId)
     {
+        lock (LockObject)
+        {
+            _contentId = contentId;
+            _cachedDresserItems = [];
+            _cachedSignature = -1;
+            _dresserItemSlotsUsed = 0;
+        }
+
+        _fromSavedCache = false;
+        Interlocked.Increment(ref _generation);
+
+        if (contentId == 0)
+        {
+            Plugin.Log.Information("Logged out - dresser cache cleared");
+            return;
+        }
+
+        if (!TryLoad(contentId, out var items, out var savedAt))
+        {
+            Plugin.Log.Information($"No saved dresser for character {contentId:X16}");
+            return;
+        }
+
+        lock (LockObject)
+        {
+            _cachedDresserItems = items;
+            _cachedSignature = SignatureOf(items);
+        }
+
+        // Set before the flag, so a reader that sees the flag always sees a valid timestamp.
+        _savedAt = savedAt;
+        _fromSavedCache = true;
+        Interlocked.Increment(ref _generation);
+        Plugin.Log.Information($"Loaded {items.Count} dresser items saved {savedAt:u} for character {contentId:X16}");
+    }
+
+    private static string PathFor(ulong contentId)
+    {
+        var dir = Plugin.PluginInterface.ConfigDirectory.FullName;
+        Directory.CreateDirectory(dir);
+        return Path.Combine(dir, $"dresser-{contentId:X16}.json");
+    }
+
+    /// <summary>
+    /// Persists the cache for the current character. Contents change rarely - only when the
+    /// dresser is actually opened or altered - so this is not a hot path.
+    /// </summary>
+    private static void Save()
+    {
+        List<PrismBoxItem> items;
+        ulong contentId;
+        lock (LockObject)
+        {
+            items = new List<PrismBoxItem>(_cachedDresserItems);
+            contentId = _contentId;
+        }
+
+        if (contentId == 0 || items.Count == 0)
+            return;
+
         try
         {
-            var agent = AgentMiragePrismPrismBox.Instance();
-            if (agent == null)
+            var payload = new CacheFile
             {
-                Plugin.Log.Debug("TryRefresh: AgentMiragePrismPrismBox.Instance() returned null - dresser not open");
+                Version = CacheFormatVersion,
+                SavedAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                Items = items,
+            };
+
+            // Write to a temporary file and move it into place, so a crash mid-write cannot
+            // leave a half-written cache that fails to parse on next login.
+            var path = PathFor(contentId);
+            var temp = path + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(payload));
+            File.Move(temp, path, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            // A cache that cannot be written is an inconvenience, not a failure - the dresser
+            // can always be read again.
+            Plugin.Log.Warning(ex, "Could not save the dresser cache");
+        }
+    }
+
+    private static bool TryLoad(ulong contentId, out List<PrismBoxItem> items, out DateTimeOffset savedAt)
+    {
+        items = [];
+        savedAt = default;
+
+        try
+        {
+            var path = PathFor(contentId);
+            if (!File.Exists(path))
                 return false;
-            }
 
-            if (!agent->IsAddonReady())
-            {
-                Plugin.Log.Debug("TryRefresh: Agent is not ready (IsAddonReady = false) - dresser not open");
+            var payload = JsonSerializer.Deserialize<CacheFile>(File.ReadAllText(path));
+            if (payload == null || payload.Version != CacheFormatVersion || payload.Items.Count == 0)
                 return false;
-            }
 
-            if (agent->Data == null)
-            {
-                Plugin.Log.Debug("TryRefresh: Agent data is null - dresser not initialized");
-                return false;
-            }
-
-            var items = ReadAll(agent);
-            var signature = SignatureOf(items);
-
-            bool changed;
-            lock (LockObject)
-            {
-                changed = _cachedDresserItems.Count == 0 || signature != _cachedSignature;
-                _cachedDresserItems = items;
-                _cachedSignature = signature;
-                _dresserItemSlotsUsed = agent->Data->UsedSlots;
-            }
-
-            if (changed)
-                Interlocked.Increment(ref _generation);
-
-            Plugin.Log.Information($"TryRefresh: Loaded {items.Count} items from dresser (UsedSlots: {_dresserItemSlotsUsed})");
+            items = payload.Items;
+            savedAt = DateTimeOffset.FromUnixTimeSeconds(payload.SavedAtUnix);
             return true;
         }
         catch (Exception ex)
         {
-            Plugin.Log.Error(ex, "Error in TryRefresh");
+            Plugin.Log.Warning(ex, "Could not read the saved dresser cache - it will be rebuilt");
             return false;
         }
     }
 
-    public static bool HasCachedData()
+    private class CacheFile
     {
-        lock (LockObject)
-        {
-            var hasData = _cachedDresserItems.Count > 0;
-            if (hasData)
-            {
-                Plugin.Log.Debug($"HasCachedData: Cache contains {_cachedDresserItems.Count} items");
-            }
-            return hasData;
-        }
-    }
-
-    public static int GetCachedItemCount()
-    {
-        lock (LockObject)
-        {
-            return _cachedDresserItems.Count;
-        }
+        public int Version { get; set; }
+        public long SavedAtUnix { get; set; }
+        public List<PrismBoxItem> Items { get; set; } = [];
     }
 
     public void Dispose()

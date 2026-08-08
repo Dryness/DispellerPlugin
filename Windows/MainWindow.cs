@@ -19,9 +19,9 @@ public class MainWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
     private List<SharedModelGroup>? sharedGroups;
-    private bool isScanning = false;
-    private string statusMessage = "Ready to scan!";
+    private string statusMessage = "Open your Glamour Dresser to get started!";
     private int lastGeneration = DresserScanner.Generation;
+    private bool collapseAllOnNextDraw = false;
     
     // Darker purple + soft magenta + text colors
     private static readonly Vector4 DarkerPurple = new(0.28f, 0.20f, 0.45f, 1.00f);  // deep purple
@@ -45,9 +45,27 @@ public class MainWindow : Window, IDisposable
         };
 
         this.plugin = plugin;
+
+        Plugin.ClientState.Login += OnLogin;
     }
 
-    public void Dispose() { }
+    public void Dispose()
+    {
+        Plugin.ClientState.Login -= OnLogin;
+    }
+
+    /// <summary>
+    /// Expanded sections are session state and shouldn't carry across a login. ImGui keeps
+    /// header state in the window's storage for as long as the game runs, so it has to be
+    /// collapsed deliberately - it won't lapse on its own.
+    ///
+    /// The cache itself is not touched here: DresserScanner watches the logged-in character
+    /// and swaps in that character's saved copy on its own.
+    /// </summary>
+    private void OnLogin()
+    {
+        collapseAllOnNextDraw = true;
+    }
 
     public override void Draw()
     {
@@ -62,13 +80,11 @@ public class MainWindow : Window, IDisposable
         
         ImGui.Spacing();
 
-        // Scan button
-        DrawScanButton();
-
-        ImGui.Spacing();
-
         // Status message
         DrawStatus();
+
+        // Cached-data notice
+        DrawCachedNotice();
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -92,73 +108,48 @@ public class MainWindow : Window, IDisposable
     private static float GetFooterHeight()
         => 1 + ImGui.GetStyle().ItemSpacing.Y + 10 + ImGui.GetTextLineHeight();
 
+    private const float HeaderHeight = 60f;
+    private const float TitleFontScale = 1.6f;
+
     private void DrawHeader()
     {
-        var windowWidth = ImGui.GetWindowSize().X;
         var drawList = ImGui.GetWindowDrawList();
-        var cursorPos = ImGui.GetCursorScreenPos();
+        var origin = ImGui.GetCursorScreenPos();
 
-        // Dark purple/magenta gradient background
+        // Span the full window width. Anchoring to the window rather than the cursor keeps
+        // the band flush with both edges instead of inset by the padding on the left and
+        // overhanging by the same amount on the right.
+        var left = ImGui.GetWindowPos().X;
+        var width = ImGui.GetWindowSize().X;
+
         drawList.AddRectFilledMultiColor(
-            cursorPos,
-            cursorPos + new Vector2(windowWidth, 60),
+            new Vector2(left, origin.Y),
+            new Vector2(left + width, origin.Y + HeaderHeight),
             ImGui.ColorConvertFloat4ToU32(SoftMagenta),
             ImGui.ColorConvertFloat4ToU32(DarkerPurple),
             ImGui.ColorConvertFloat4ToU32(DarkerPurple),
             ImGui.ColorConvertFloat4ToU32(SoftMagenta)
         );
 
-        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 5);
-        ImGui.SetCursorPosX(20);
+        // The game font has no emoji, so the original sparkles rendered as nothing at all.
+        // SeIconChar glyphs are drawn from the game's own font and scale with it.
+        var title = $"{(char)SeIconChar.Hyadelyn} Dispeller {(char)SeIconChar.Hyadelyn}";
 
-        // Title with emojis
-        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 1.0f, 1.0f, 1.0f));
-        ImGui.SetWindowFontScale(1.2f);
-        ImGui.TextUnformatted("✨ Dispeller ✨");
-        ImGui.SetWindowFontScale(1.0f);
+        // Measure at the scale it will be drawn at - SetWindowFontScale feeds CalcTextSize.
+        ImGui.SetWindowFontScale(TitleFontScale);
+        var titleSize = ImGui.CalcTextSize(title);
+
+        ImGui.SetCursorPosX((width - titleSize.X) / 2);
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (HeaderHeight - titleSize.Y) / 2);
+
+        ImGui.PushStyleColor(ImGuiCol.Text, BrightWhite);
+        ImGui.TextUnformatted(title);
         ImGui.PopStyleColor();
+        ImGui.SetWindowFontScale(1.0f);
 
-        ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 5);
-        ImGui.Spacing();
-        ImGui.Spacing();
-
-        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 50);
-    }
-
-    private void DrawScanButton()
-    {
-        var buttonWidth = ImGui.GetContentRegionAvail().X * 0.5f;
-        var centerPos = (ImGui.GetContentRegionAvail().X - buttonWidth) / 2;
-        ImGui.SetCursorPosX(centerPos);
-
-        if (isScanning)
-        {
-            ImGui.PushStyleColor(ImGuiCol.Button, LightPurple);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, LightPurple);
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, LightPurple);
-            ImGui.PushStyleColor(ImGuiCol.Text, BrightWhite);
-            
-            if (ImGui.Button("Scanning...", new Vector2(buttonWidth, 40)))
-            {
-                // Cancelled during scan
-            }
-            
-            ImGui.PopStyleColor(4);
-        }
-        else
-        {
-            ImGui.PushStyleColor(ImGuiCol.Button, SoftMagenta);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(SoftMagenta.X, SoftMagenta.Y, SoftMagenta.Z, 0.8f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, DarkerPurple);
-            ImGui.PushStyleColor(ImGuiCol.Text, BrightWhite);
-            
-            if (ImGui.Button("💖 Scan Glamour Dresser 💖", new Vector2(buttonWidth, 40)))
-            {
-                ScanDresser();
-            }
-            
-            ImGui.PopStyleColor(4);
-        }
+        // Land exactly on the bottom edge of the band. Letting the text's own advance stand,
+        // then nudging it with spacings, was what left dead space inside and below the band.
+        ImGui.SetCursorScreenPos(new Vector2(origin.X, origin.Y + HeaderHeight));
     }
 
     private void DrawStatus()
@@ -166,8 +157,27 @@ public class MainWindow : Window, IDisposable
         var centerPos = (ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(statusMessage).X) / 2;
         ImGui.SetCursorPosX(centerPos);
         
-        ImGui.PushStyleColor(ImGuiCol.Text, isScanning ? SoftMagenta : BrightWhite);
+        ImGui.PushStyleColor(ImGuiCol.Text, BrightWhite);
         ImGui.TextUnformatted(statusMessage);
+        ImGui.PopStyleColor();
+    }
+
+    /// <summary>
+    /// Says so when the results were built from the copy saved on disk rather than from a
+    /// live read. Evaluated every frame rather than at scan time, so it clears the moment the
+    /// dresser is opened and the cache is confirmed.
+    /// </summary>
+    private void DrawCachedNotice()
+    {
+        if (!DresserScanner.IsFromSavedCache)
+            return;
+
+        var message = $"Cached from {DresserScanner.SavedAt.ToLocalTime():d MMM yyyy, HH:mm} - open your dresser to refresh";
+        var centerPos = (ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(message).X) / 2;
+        ImGui.SetCursorPosX(centerPos);
+
+        ImGui.PushStyleColor(ImGuiCol.Text, LightPurple);
+        ImGui.TextUnformatted(message);
         ImGui.PopStyleColor();
     }
 
@@ -192,11 +202,17 @@ public class MainWindow : Window, IDisposable
             DrawSharedGroup(group);
             ImGui.Spacing();
         }
+
+        // Cleared only once headers have actually been drawn, so a login with the window
+        // shut - or with no results yet - still collapses them when they next appear.
+        collapseAllOnNextDraw = false;
     }
 
     private void DrawSharedGroup(SharedModelGroup group)
     {
-        using var id = ImRaii.PushId($"{group.SlotCategory}-{group.Items.Count}");
+        // Keyed on the slot category alone. Including the item count made the ID change
+        // whenever the dresser did, so ImGui saw a new widget and collapsed it.
+        using var id = ImRaii.PushId(group.SlotCategory);
 
         // Get color based on slot category
         var groupColor = GetColorForSlot(group.SlotCategory);
@@ -205,8 +221,14 @@ public class MainWindow : Window, IDisposable
         ImGui.PushStyleColor(ImGuiCol.HeaderActive, groupColor);
         ImGui.PushStyleColor(ImGuiCol.Text, AshBlack);
 
-        var headerText = $"{group.SlotCategory} ({group.Items.Count} items)";
-        
+        // Everything after ### is the ID, everything before it is drawn - so the count can
+        // change in the label without ImGui treating it as a different header and losing
+        // whether the user had it expanded.
+        var headerText = $"{group.SlotCategory} ({group.Items.Count} items)###header";
+
+        if (collapseAllOnNextDraw)
+            ImGui.SetNextItemOpen(false, ImGuiCond.Always);
+
         if (ImGui.CollapsingHeader(headerText))
         {
             ImGui.PopStyleColor(4);
@@ -388,32 +410,10 @@ public class MainWindow : Window, IDisposable
         ImGui.PopStyleColor();
     }
 
-    private void ScanDresser()
-    {
-        isScanning = true;
-        statusMessage = "Scanning your glamour dresser...";
-
-        try
-        {
-            // Pull the freshest read available; a no-op if the dresser is closed, in which
-            // case whatever the cache holds is used.
-            unsafe
-            {
-                DresserScanner.TryRefresh();
-            }
-
-            BuildGroups();
-        }
-        finally
-        {
-            isScanning = false;
-        }
-    }
-
     /// <summary>
-    /// Rebuilds the grouped results from the cache. Called by the Scan button and again
-    /// whenever the cache changes underneath the window, so opening the dresser, changing
-    /// its view, or depositing an item all keep the results current.
+    /// Rebuilds the grouped results from the cache, whenever the cache changes underneath
+    /// the window. Opening the dresser, changing its view, depositing or retrieving, and
+    /// loading a character's saved copy all land here - there is nothing for a user to press.
     /// </summary>
     private void BuildGroups()
     {
