@@ -166,7 +166,10 @@ public class MainWindow : Window, IDisposable
             return;
         }
 
-        if (!ImGui.BeginChild("Results", Vector2.Zero, false))
+        // ImRaii.Child ends the child unconditionally - ImGui requires EndChild() even
+        // when BeginChild() returns false (unlike Begin/End on popups and menus).
+        using var child = ImRaii.Child("Results", Vector2.Zero, false);
+        if (!child)
             return;
 
         foreach (var group in sharedGroups.Where(g => g.Items.Count > 0))
@@ -174,8 +177,6 @@ public class MainWindow : Window, IDisposable
             DrawSharedGroup(group);
             ImGui.Spacing();
         }
-
-        ImGui.EndChild();
     }
 
     private void DrawSharedGroup(SharedModelGroup group)

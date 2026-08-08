@@ -29,14 +29,13 @@ public class DresserScanner : IDisposable
             if (!agent->IsAddonReady() || agent->Data == null)
                 return;
 
-            // Get used slots offset
-            ushort* usedSlots = (ushort*)((nint)agent->Data + 0x10B460);
-            
+            var usedSlots = agent->Data->UsedSlots;
+
             // Always cache if cache is empty, or if the slot count has changed
             bool shouldUpdate = false;
             lock (LockObject)
             {
-                shouldUpdate = _cachedDresserItems.Count == 0 || *usedSlots != _dresserItemSlotsUsed;
+                shouldUpdate = _cachedDresserItems.Count == 0 || usedSlots != _dresserItemSlotsUsed;
             }
             
             if (!shouldUpdate)
@@ -67,8 +66,8 @@ public class DresserScanner : IDisposable
                     itemCount++;
                 }
 
-                _dresserItemSlotsUsed = *usedSlots;
-                
+                _dresserItemSlotsUsed = usedSlots;
+
                 if (itemCount > 0)
                 {
                     Plugin.Log.Information($"OnFrameworkUpdate: Cached {itemCount} items from dresser (cache was empty: {wasEmpty})");
@@ -137,8 +136,7 @@ public class DresserScanner : IDisposable
                 }
 
                 // Update the used slots counter to prevent immediate re-trigger
-                ushort* usedSlots = (ushort*)((nint)agent->Data + 0x10B460);
-                _dresserItemSlotsUsed = *usedSlots;
+                _dresserItemSlotsUsed = agent->Data->UsedSlots;
                 
                 Plugin.Log.Information($"TryRefresh: Loaded {itemCount} items from dresser");
                 return true;
