@@ -21,6 +21,7 @@ public class MainWindow : Window, IDisposable
     private List<SharedModelGroup>? sharedGroups;
     private bool isScanning = false;
     private string statusMessage = "Ready to scan!";
+    private int lastGeneration = DresserScanner.Generation;
     
     // Darker purple + soft magenta + text colors
     private static readonly Vector4 DarkerPurple = new(0.28f, 0.20f, 0.45f, 1.00f);  // deep purple
@@ -50,6 +51,12 @@ public class MainWindow : Window, IDisposable
 
     public override void Draw()
     {
+        // The cache re-reads itself while the dresser is open. Rebuild when its contents
+        // have actually changed - opening the dresser, changing its view, depositing or
+        // retrieving - so the results never quietly describe an older read.
+        if (DresserScanner.Generation != lastGeneration)
+            BuildGroups();
+
         // Pink gradient header
         DrawHeader();
         
@@ -388,41 +395,37 @@ public class MainWindow : Window, IDisposable
 
         try
         {
-            // Check if we have cached data first (before trying to refresh)
-            int cachedCountBefore = DresserScanner.GetCachedItemCount();
-            bool hasCachedData = cachedCountBefore > 0;
-            
-            Plugin.Log.Information($"ScanDresser: Starting scan - cached items before refresh: {cachedCountBefore}");
-            
-            // Try to refresh the dresser data if it's currently open (to get latest data)
-            bool refreshed = false;
+            // Pull the freshest read available; a no-op if the dresser is closed, in which
+            // case whatever the cache holds is used.
             unsafe
             {
-                refreshed = DresserScanner.TryRefresh();
+                DresserScanner.TryRefresh();
             }
 
-            int cachedCountAfter = DresserScanner.GetCachedItemCount();
+            BuildGroups();
+        }
+        finally
+        {
+            isScanning = false;
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the grouped results from the cache. Called by the Scan button and again
+    /// whenever the cache changes underneath the window, so opening the dresser, changing
+    /// its view, or depositing an item all keep the results current.
+    /// </summary>
+    private void BuildGroups()
+    {
+        lastGeneration = DresserScanner.Generation;
+
+        try
+        {
             var dresserItems = DresserScanner.GetDresserItems();
-            
-            Plugin.Log.Information($"Dresser scan: Found {dresserItems.Count} items (cached before: {cachedCountBefore}, cached after: {cachedCountAfter}, refreshed: {refreshed})");
-            
+
             if (dresserItems.Count == 0)
             {
-                if (!hasCachedData && !refreshed)
-                {
-                    statusMessage = "Your glamour dresser hasn't been opened yet! Please open your Glamour Dresser at least once, then try again.";
-                    Plugin.Log.Warning("Dresser scan: No cached data and dresser not open");
-                }
-                else if (hasCachedData && !refreshed)
-                {
-                    statusMessage = "Using cached data, but dresser appears empty. Try opening the dresser to refresh.";
-                    Plugin.Log.Warning($"Dresser scan: Had {cachedCountBefore} cached items but got 0 after refresh attempt");
-                }
-                else
-                {
-                    statusMessage = "Your glamour dresser appears to be empty!";
-                    Plugin.Log.Warning("Dresser scan: Dresser is open but empty");
-                }
+                statusMessage = "Open your Glamour Dresser at least once so it can be read!";
                 sharedGroups = null;
                 return;
             }
@@ -449,7 +452,7 @@ public class MainWindow : Window, IDisposable
 
             Plugin.Log.Information($"Scan: {dresserItems.Count} raw, {uniqueItems.Count} unique, {validItems.Count} equippable, {outfitCount} outfits");
             foreach (var g in uniqueItems.GroupBy(i => GetSlotName(i.ItemId)).OrderBy(g => GetSlotOrder(g.Key)))
-                Plugin.Log.Information($"Scan category {g.Key}: {g.Count()}");
+                Plugin.Log.Debug($"Scan category {g.Key}: {g.Count()}");
 
             // First, identify items with shared models by grouping by slot + model
             var itemsWithSharedModels = validItems
@@ -522,10 +525,6 @@ public class MainWindow : Window, IDisposable
             statusMessage = $"Error: {ex.Message}";
             sharedGroups = null;
             Plugin.Log.Error(ex, "Error during dresser scan");
-        }
-        finally
-        {
-            isScanning = false;
         }
     }
 
@@ -619,14 +618,21 @@ public class MainWindow : Window, IDisposable
         return item.DyeCount;
     }
 
+    private static HashSet<uint>? armoireItemIds;
+
     private bool CanGoInArmoire(uint itemId)
     {
         if (itemId == 0)
             return false;
-            
-        // Check if item exists in the Cabinet sheet (Armoire items)
-        var cabinetSheet = Plugin.DataManager.GetExcelSheet<Cabinet>()!;
-        return cabinetSheet.Any(row => row.Item.RowId == BaseItemId(itemId));
+
+        // Built once. This runs per item, and a linear Any() over the Cabinet sheet made a
+        // rebuild cost items x cabinet rows - tolerable when only the Scan button triggered
+        // it, not when the results rebuild themselves as the dresser changes.
+        armoireItemIds ??= Plugin.DataManager.GetExcelSheet<Cabinet>()!
+            .Select(row => row.Item.RowId)
+            .ToHashSet();
+
+        return armoireItemIds.Contains(BaseItemId(itemId));
     }
 
     private int GetSlotOrder(string slotName)

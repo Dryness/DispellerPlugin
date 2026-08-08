@@ -2,6 +2,7 @@ using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using System;
 using System.Collections.Generic;
+using System.Threading;
 
 namespace Dispeller.Services;
 
@@ -10,6 +11,23 @@ public class DresserScanner : IDisposable
     private static readonly object LockObject = new();
     private static List<PrismBoxItem> _cachedDresserItems = [];
     private static int _dresserItemSlotsUsed = 0;
+    private static long _cachedSignature = -1;
+    private static int _generation = 0;
+
+    /// <summary>
+    /// Bumped every time the cached contents actually change. The window watches this so it
+    /// can rebuild its results when the dresser is opened, re-sorted, or deposited into,
+    /// without the user pressing Scan again.
+    /// </summary>
+    public static int Generation => Volatile.Read(ref _generation);
+
+    // The dresser is re-read on a timer rather than on a change signal, because the game
+    // gives us nothing reliable to watch. UsedSlots was used for this and does not track
+    // the contents: two reads both reporting 702 returned completely different items. A
+    // full pass over the 8000-entry array is cheap, so polling twice a second is simpler
+    // and more dependable than trying to detect the change.
+    private const int PollIntervalFrames = 30;
+    private int _framesSincePoll = PollIntervalFrames;
 
     private bool _disposed = false;
 
@@ -23,61 +41,38 @@ public class DresserScanner : IDisposable
         try
         {
             var agent = AgentMiragePrismPrismBox.Instance();
-            if (agent == null)
+            if (agent == null || !agent->IsAddonReady() || agent->Data == null)
+            {
+                // Arm the next poll so opening the dresser reads it on the first frame the
+                // addon is ready, rather than waiting out the interval.
+                _framesSincePoll = PollIntervalFrames;
+                return;
+            }
+
+            if (++_framesSincePoll < PollIntervalFrames)
+                return;
+            _framesSincePoll = 0;
+
+            var items = ReadAll(agent);
+
+            // The array can be read before the game has filled it. Leave the cache alone and
+            // try again on the next poll rather than caching an empty dresser.
+            if (items.Count == 0)
                 return;
 
-            if (!agent->IsAddonReady() || agent->Data == null)
-                return;
-
-            var usedSlots = agent->Data->UsedSlots;
-
-            // Always cache if cache is empty, or if the slot count has changed
-            bool shouldUpdate = false;
+            var signature = SignatureOf(items);
             lock (LockObject)
             {
-                shouldUpdate = _cachedDresserItems.Count == 0 || usedSlots != _dresserItemSlotsUsed;
+                if (_cachedDresserItems.Count > 0 && signature == _cachedSignature)
+                    return;
+
+                _cachedDresserItems = items;
+                _cachedSignature = signature;
+                _dresserItemSlotsUsed = agent->Data->UsedSlots;
             }
-            
-            if (!shouldUpdate)
-                return;
 
-            lock (LockObject)
-            {
-                var wasEmpty = _cachedDresserItems.Count == 0;
-                _cachedDresserItems.Clear();
-                
-                // Scan the whole array. UsedSlots is NOT the live item count: with UsedSlots
-                // at 702 the array held 1212 non-zero entries, and the 510 past the boundary
-                // were real, distinct items - every boot and every accessory among them.
-                var items = agent->Data->PrismBoxItems;
-                var itemCount = 0;
-                for (var i = 0; i < items.Length; i++)
-                {
-                    var item = items[i];
-                    if (item.ItemId == 0)
-                        continue;
-
-                    _cachedDresserItems.Add(new PrismBoxItem
-                    {
-                        // Don't store name from dresser data - it can be incorrect/outdated
-                        // Name will be retrieved from Lumina in MainWindow for accuracy
-                        Name = string.Empty,
-                        Slot = item.Slot,
-                        ItemId = item.ItemId,
-                        IconId = item.IconId,
-                        Stain1 = item.Stains[0],
-                        Stain2 = item.Stains[1],
-                    });
-                    itemCount++;
-                }
-
-                _dresserItemSlotsUsed = usedSlots;
-
-                if (itemCount > 0)
-                {
-                    Plugin.Log.Information($"OnFrameworkUpdate: Cached {itemCount} items from dresser (UsedSlots: {usedSlots}, cache was empty: {wasEmpty})");
-                }
-            }
+            Interlocked.Increment(ref _generation);
+            Plugin.Log.Information($"Dresser cache updated: {items.Count} items (generation {Generation})");
         }
         catch
         {
@@ -86,7 +81,53 @@ public class DresserScanner : IDisposable
         }
     }
 
-    public static unsafe List<PrismBoxItem> GetDresserItems()
+    /// <summary>
+    /// Reads every non-empty entry in the array. UsedSlots is NOT the live item count: with
+    /// UsedSlots at 702 the array held 1212 non-zero entries, and the 510 past that boundary
+    /// were real, distinct items - every boot and every accessory among them.
+    /// </summary>
+    private static unsafe List<PrismBoxItem> ReadAll(AgentMiragePrismPrismBox* agent)
+    {
+        var items = agent->Data->PrismBoxItems;
+        var result = new List<PrismBoxItem>();
+
+        for (var i = 0; i < items.Length; i++)
+        {
+            var item = items[i];
+            if (item.ItemId == 0)
+                continue;
+
+            result.Add(new PrismBoxItem
+            {
+                // Don't store name from dresser data - it can be incorrect/outdated
+                // Name will be retrieved from Lumina in MainWindow for accuracy
+                Name = string.Empty,
+                Slot = item.Slot,
+                ItemId = item.ItemId,
+                IconId = item.IconId,
+                Stain1 = item.Stains[0],
+                Stain2 = item.Stains[1],
+            });
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Order-insensitive fingerprint of the contents. The array reorders itself as the
+    /// dresser's view changes, and a reshuffle of the same items produces the same results -
+    /// so ordering must not count as a change, or the window would rebuild for nothing.
+    /// </summary>
+    private static long SignatureOf(List<PrismBoxItem> items)
+    {
+        long sum = 0;
+        foreach (var item in items)
+            sum += item.ItemId;
+
+        return items.Count * 1_000_000_007L + sum;
+    }
+
+    public static List<PrismBoxItem> GetDresserItems()
     {
         lock (LockObject)
         {
@@ -118,38 +159,23 @@ public class DresserScanner : IDisposable
                 return false;
             }
 
+            var items = ReadAll(agent);
+            var signature = SignatureOf(items);
+
+            bool changed;
             lock (LockObject)
             {
-                _cachedDresserItems.Clear();
-
-                // See OnFrameworkUpdate: the whole array is live, UsedSlots undercounts it.
-                var usedSlots = agent->Data->UsedSlots;
-                var items = agent->Data->PrismBoxItems;
-                var itemCount = 0;
-                for (var i = 0; i < items.Length; i++)
-                {
-                    var item = items[i];
-                    if (item.ItemId == 0)
-                        continue;
-
-                    _cachedDresserItems.Add(new PrismBoxItem
-                    {
-                        Name = string.Empty,
-                        Slot = item.Slot,
-                        ItemId = item.ItemId,
-                        IconId = item.IconId,
-                        Stain1 = item.Stains[0],
-                        Stain2 = item.Stains[1],
-                    });
-                    itemCount++;
-                }
-
-                // Update the used slots counter to prevent immediate re-trigger
-                _dresserItemSlotsUsed = usedSlots;
-
-                Plugin.Log.Information($"TryRefresh: Loaded {itemCount} items from dresser (UsedSlots: {_dresserItemSlotsUsed})");
-                return true;
+                changed = _cachedDresserItems.Count == 0 || signature != _cachedSignature;
+                _cachedDresserItems = items;
+                _cachedSignature = signature;
+                _dresserItemSlotsUsed = agent->Data->UsedSlots;
             }
+
+            if (changed)
+                Interlocked.Increment(ref _generation);
+
+            Plugin.Log.Information($"TryRefresh: Loaded {items.Count} items from dresser (UsedSlots: {_dresserItemSlotsUsed})");
+            return true;
         }
         catch (Exception ex)
         {
