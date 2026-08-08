@@ -46,13 +46,12 @@ public class DresserScanner : IDisposable
                 var wasEmpty = _cachedDresserItems.Count == 0;
                 _cachedDresserItems.Clear();
                 
-                // Only [0, UsedSlots) holds live items. The array is 8000 entries long and the
-                // game leaves non-zero junk past the boundary - a 702-item dresser had 510 such
-                // entries. Verified by depositing an item: it landed at exactly index UsedSlots
-                // and pushed the junk up one, leaving the junk count unchanged.
+                // Scan the whole array. UsedSlots is NOT the live item count: with UsedSlots
+                // at 702 the array held 1212 non-zero entries, and the 510 past the boundary
+                // were real, distinct items - every boot and every accessory among them.
                 var items = agent->Data->PrismBoxItems;
                 var itemCount = 0;
-                for (var i = 0; i < usedSlots && i < items.Length; i++)
+                for (var i = 0; i < items.Length; i++)
                 {
                     var item = items[i];
                     if (item.ItemId == 0)
@@ -76,8 +75,6 @@ public class DresserScanner : IDisposable
 
                 if (itemCount > 0)
                 {
-                    // UsedSlots should match itemCount - they come from different fields, so a
-                    // mismatch means the struct layout drifted out from under FFXIVClientStructs.
                     Plugin.Log.Information($"OnFrameworkUpdate: Cached {itemCount} items from dresser (UsedSlots: {usedSlots}, cache was empty: {wasEmpty})");
                 }
             }
@@ -125,11 +122,11 @@ public class DresserScanner : IDisposable
             {
                 _cachedDresserItems.Clear();
 
-                // See OnFrameworkUpdate: entries at or past UsedSlots are stale leftovers.
+                // See OnFrameworkUpdate: the whole array is live, UsedSlots undercounts it.
                 var usedSlots = agent->Data->UsedSlots;
                 var items = agent->Data->PrismBoxItems;
                 var itemCount = 0;
-                for (var i = 0; i < usedSlots && i < items.Length; i++)
+                for (var i = 0; i < items.Length; i++)
                 {
                     var item = items[i];
                     if (item.ItemId == 0)
