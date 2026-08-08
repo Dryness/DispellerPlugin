@@ -13,14 +13,18 @@ public class ModelDetectionService
     {
         var primaryKey = (ushort)(raw & 0xFFFF);
         var secondaryKey = (ushort)((raw >> 16) & 0xFFFF);
-        var variant = (ushort)((raw >> 32) & 0xFFFF);
-        var dye = (ushort)((raw >> 48) & 0xFFFF);
+        var weaponVariant = (ushort)((raw >> 32) & 0xFFFF);
 
-        if (variant != 0)
-        {
-            // weapon
-            return (primaryKey, secondaryKey, variant, dye);
-        }
+        // Gear packs ModelMain as modelId | variant << 16, leaving bits 32+ zero. Weapons
+        // use three fields: primary | secondary << 16 | variant << 32. A non-zero third
+        // field is therefore what distinguishes a weapon from a piece of gear.
+        //
+        // In both cases the trailing variant only swaps materials and colours - the mesh is
+        // the leading field(s). This plugin deliberately matches on the mesh, so a recolour
+        // still counts as a shared model. Gear has always been compared that way; weapons
+        // previously compared all four fields, which made a match all but impossible.
+        if (weaponVariant != 0)
+            return (primaryKey, secondaryKey, 0, 0);
 
         return (primaryKey, 0, 0, 0);
     }
