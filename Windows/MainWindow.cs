@@ -289,7 +289,7 @@ public class MainWindow : Window, IDisposable
 
         // Try to get icon. The dresser's own IconId can be one the game cannot resolve for
         // HQ entries, so fall back to the icon the Item sheet gives for the base item.
-        var icon = GetIcon((ushort)item.IconId) ?? GetIcon((ushort)GetItemIconFromLumina(item.ItemId));
+        var icon = GetIcon((uint)item.IconId) ?? GetIcon(GetItemIconFromLumina(item.ItemId));
         if (icon != null)
         {
             ImGui.Image(icon.Handle, new Vector2(32, 32));
@@ -318,7 +318,7 @@ public class MainWindow : Window, IDisposable
         if (ImGui.IsItemHovered())
         {
             ImGui.BeginTooltip();
-            ImGui.TextUnformatted($"Matches {matchingModelCount} items with model: {item.ModelId}");
+            ImGui.TextUnformatted($"{matchingModelCount} items match model: {item.ModelId}");
             ImGui.EndTooltip();
         }
 
@@ -381,15 +381,34 @@ public class MainWindow : Window, IDisposable
     /// GetFromGameIcon throws IconNotFoundException for an icon the game does not have, so
     /// GetWrapOrDefault never gets the chance to return null. An unresolvable icon must not
     /// take the whole window's Draw() down with it - DrawItem falls back to a blank space.
+    ///
+    /// Takes a uint, deliberately. The id used to be cast to ushort at the call site, which
+    /// meant an out-of-range value wrapped into a valid but unrelated icon instead of
+    /// failing: a cane rendered as a pair of boots, and because the lookup succeeded the
+    /// fallback to the sheet's own icon never got a chance to run.
     /// </summary>
-    private IDalamudTextureWrap? GetIcon(ushort id)
+    private IDalamudTextureWrap? GetIcon(uint id)
     {
         if (id == 0)
             return null;
 
+        // The dresser offsets an HQ entry's icon by 1,000,000, exactly as it offsets its item
+        // id - measured in game on 2026-08-08: icons 1038223/1032676/1048001 against sheet
+        // icons 38223/32676/48001. Asking for the HQ variant of the base icon gets the game's
+        // own HQ treatment rather than a near-miss.
+        var isHq = id >= 1_000_000;
+        var iconId = isHq ? id - 1_000_000 : id;
+
+        // Anything still out of range is not an icon this can resolve. Return null rather
+        // than truncating, so the caller's fallback runs.
+        if (iconId > ushort.MaxValue)
+            return null;
+
         try
         {
-            return Plugin.TextureProvider.GetFromGameIcon(new Dalamud.Interface.Textures.GameIconLookup(id)).GetWrapOrDefault();
+            return Plugin.TextureProvider
+                .GetFromGameIcon(new Dalamud.Interface.Textures.GameIconLookup(iconId, itemHq: isHq))
+                .GetWrapOrDefault();
         }
         catch (Exception ex)
         {
