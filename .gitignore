@@ -26,3 +26,7 @@ obj/
 # Temporary files
 *.tmp
 *.log
+
+# Machine-local notes and tooling
+CLAUDE.md
+.claude/
