@@ -383,9 +383,11 @@ public class MainWindow : Window, IDisposable
                 return;
             }
 
-            // Deduplicate by Slot + ItemId to prevent duplicates from race conditions
+            // Deduplicate by Slot to prevent duplicates from race conditions. A dresser slot
+            // holds exactly one item, so Slot alone is the identity - keying on Slot + ItemId
+            // would let two different items claiming the same slot through.
             var uniqueItems = dresserItems
-                .GroupBy(item => new { item.Slot, item.ItemId })
+                .GroupBy(item => item.Slot)
                 .Select(g => g.First())
                 .ToList();
 

@@ -46,9 +46,14 @@ public class DresserScanner : IDisposable
                 var wasEmpty = _cachedDresserItems.Count == 0;
                 _cachedDresserItems.Clear();
                 
+                // Only [0, UsedSlots) holds live items. The array is 8000 entries long and the
+                // game never zeroes an entry when an item is retrieved, so everything past
+                // UsedSlots is an abandoned leftover of a previously stored item.
+                var items = agent->Data->PrismBoxItems;
                 var itemCount = 0;
-                foreach (var item in agent->Data->PrismBoxItems)
+                for (var i = 0; i < usedSlots && i < items.Length; i++)
                 {
+                    var item = items[i];
                     if (item.ItemId == 0)
                         continue;
 
@@ -118,10 +123,14 @@ public class DresserScanner : IDisposable
             lock (LockObject)
             {
                 _cachedDresserItems.Clear();
-                
+
+                // See OnFrameworkUpdate: entries at or past UsedSlots are stale leftovers.
+                var usedSlots = agent->Data->UsedSlots;
+                var items = agent->Data->PrismBoxItems;
                 var itemCount = 0;
-                foreach (var item in agent->Data->PrismBoxItems)
+                for (var i = 0; i < usedSlots && i < items.Length; i++)
                 {
+                    var item = items[i];
                     if (item.ItemId == 0)
                         continue;
 
@@ -138,8 +147,8 @@ public class DresserScanner : IDisposable
                 }
 
                 // Update the used slots counter to prevent immediate re-trigger
-                _dresserItemSlotsUsed = agent->Data->UsedSlots;
-                
+                _dresserItemSlotsUsed = usedSlots;
+
                 Plugin.Log.Information($"TryRefresh: Loaded {itemCount} items from dresser (UsedSlots: {_dresserItemSlotsUsed})");
                 LogSlotDistribution(agent->Data);
                 return true;
