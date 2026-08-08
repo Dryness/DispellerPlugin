@@ -44,8 +44,12 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME#v}"
           built=$(jq -r .AssemblyVersion "bin/Release/$INTERNAL_NAME.json")
-          # AssemblyVersion is 4-part (1.4.0.0); the tag is not (v1.4).
-          if [ "${built%%.0.0}" != "$tag" ]; then
+          # AssemblyVersion is always 4-part (1.4.0.0, 1.5.1.0) while the tag carries only
+          # the components written in the csproj (v1.4, v1.5.1). Pad both to four and
+          # compare. Stripping a literal ".0.0" suffix only worked for two-part versions:
+          # 1.5.1.0 does not end in ".0.0", so a three-part release could never be tagged.
+          pad() { IFS=. read -r a b c d <<< "$1"; echo "${a:-0}.${b:-0}.${c:-0}.${d:-0}"; }
+          if [ "$(pad "$tag")" != "$(pad "$built")" ]; then
             echo "Tag $GITHUB_REF_NAME does not match built version $built."
             echo "Bump <Version> in Dispeller.csproj, or retag."
             exit 1
