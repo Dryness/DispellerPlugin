@@ -11,6 +11,24 @@ the same appearance. Keep one, dispel the rest.
 It also flags items that can live in the Armoire instead, which doesn't consume dresser
 space at all.
 
+## Installing
+
+This plugin is not in the official Dalamud repository. To install it, add this URL under
+Dalamud **Settings → Experimental → Custom Plugin Repositories**:
+
+```
+https://raw.githubusercontent.com/Dryness/DispellerPlugin/master/repo.json
+```
+
+Dispeller then appears in the plugin installer and updates like any other plugin.
+
+Built against **Dalamud API 15**. If your Dalamud is on a different API level it will
+refuse to load, which is expected — see the fork note below.
+
+Alternatively, grab `latest.zip` from
+[Releases](https://github.com/Dryness/DispellerPlugin/releases) and unpack it into your
+`devPlugins/Dispeller/` folder.
+
 ## Usage
 
 Open the Glamour Dresser at least once so the plugin can read it, then run `/dispeller`
@@ -24,10 +42,10 @@ the dresser. Re-scanning while it's open picks up any changes.
 This is a fork of [pupwife/DispellerPlugin](https://github.com/pupwife/DispellerPlugin),
 maintained for personal use only.
 
-I used Claude (Opus 5, max effort) to update to the current Dalamud API level (15) to work
-on the current patch at time of commit (7.55).
+*I used Claude (Opus 5, max effort) to update to the current Dalamud API level (15) to work
+on the current patch at time of commit (7.55).*
 
-I make no claims of ownership over any of the code in this repo.
+*I make no claims of ownership over any of the code in this repo.*
 
 *This is a strictly "**works on my machine**" fork, with no guarantees that it will work on
 yours.*
@@ -36,9 +54,9 @@ yours.*
 
 ## AI usage declaration
 
-Claude thought that this section would be useful. If anyone who knows what they're doing
+*Claude thought that this section would be useful. If anyone who knows what they're doing
 cares for the justifications behind why anything was changed the way they were, here you
-go.
+go.*
 
 ---
 

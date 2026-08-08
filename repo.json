@@ -1,0 +1,28 @@
+[
+  {
+    "Author": "Dryness",
+    "Name": "Dispeller",
+    "InternalName": "Dispeller",
+    "AssemblyVersion": "1.4.0.0",
+    "Description": "A cute plugin to help you manage your Glamour Dresser by identifying items that share the same visual models.",
+    "ApplicableVersion": "any",
+    "Tags": [
+      "glamour",
+      "dresser",
+      "models",
+      "fashion",
+      "cute",
+      "utility"
+    ],
+    "DalamudApiLevel": 15,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "LoadPriority": 0,
+    "Punchline": "Easily clean out your Glamour Dresser.",
+    "AcceptsFeedback": true,
+    "DownloadLinkInstall": "https://github.com/Dryness/DispellerPlugin/releases/latest/download/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/Dryness/DispellerPlugin/releases/latest/download/latest.zip",
+    "DownloadLinkTesting": "https://github.com/Dryness/DispellerPlugin/releases/latest/download/latest.zip"
+  }
+]
