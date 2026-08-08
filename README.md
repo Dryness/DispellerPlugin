@@ -1,4 +1,4 @@
-# Dispeller
+# Dispeller Continued
 
 A Dalamud plugin for FINAL FANTASY XIV that helps you clean out your Glamour Dresser by
 identifying items that share the same visual model.

@@ -23,7 +23,7 @@ public sealed class Plugin : IDalamudPlugin
     public Configuration Configuration { get; init; }
     public DresserScanner DresserScanner { get; init; }
 
-    public readonly WindowSystem WindowSystem = new("Dispeller");
+    public readonly WindowSystem WindowSystem = new("DispellerContinued");
     private MainWindow MainWindow { get; init; }
 
     public Plugin()
@@ -38,7 +38,7 @@ public sealed class Plugin : IDalamudPlugin
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open Dispeller - Find shared models in your glamour dresser!"
+            HelpMessage = "Open Dispeller Continued - Find shared models in your glamour dresser!"
         });
 
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
@@ -46,7 +46,7 @@ public sealed class Plugin : IDalamudPlugin
         // No separate settings window, so the installer's gear opens the main UI.
         PluginInterface.UiBuilder.OpenConfigUi += ToggleMainUi;
 
-        Log.Information($"===Dispeller plugin loaded! Ready to find shared models!===");
+        Log.Information($"===Dispeller Continued plugin loaded! Ready to find shared models!===");
     }
 
     public void Dispose()

@@ -34,7 +34,7 @@ public class MainWindow : Window, IDisposable
     private static readonly Vector4 LightMintGreen = new(0.50f, 0.85f, 0.75f, 1.00f);  // minty green for weapons
 
     public MainWindow(Plugin plugin)
-        : base("Dispeller - Shared Model Analyzer", ImGuiWindowFlags.NoScrollbar)
+        : base("Dispeller Continued - Shared Model Analyzer", ImGuiWindowFlags.NoScrollbar)
     {
         SizeConstraints = new WindowSizeConstraints
         {
