@@ -55,15 +55,11 @@ public class ConfigWindow : Window, IDisposable
 
         DrawSetting(
             "Hide the window when you change zone",
-            "Only hides it - /dispeller opens it again. Useful if you would rather not have it "
-            + "follow you into a duty.",
             configuration.HideOnZoneChange,
             value => configuration.HideOnZoneChange = value);
 
         DrawSetting(
             "Open Dispeller with the Glamour Dresser",
-            "Reacts to the dresser opening, not to it being open - so closing this window by "
-            + "hand while the dresser is still up leaves it closed.",
             configuration.OpenWithGlamourDresser,
             value => configuration.OpenWithGlamourDresser = value);
 
@@ -75,8 +71,6 @@ public class ConfigWindow : Window, IDisposable
 
             DrawSetting(
                 "Hide Dispeller when leaving the Glamour Dresser",
-                "Puts the window away again when the dresser closes. Leave this off to keep "
-                + "reading the results after you walk away.",
                 configuration.HideWhenLeavingGlamourDresser,
                 value => configuration.HideWhenLeavingGlamourDresser = value);
 
@@ -87,16 +81,80 @@ public class ConfigWindow : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
-        DrawSectionTitle("What counts as the same model");
+        DrawSectionTitle("Recolours");
 
         DrawSetting(
             "Count recolours as duplicates",
             "An item's model is a mesh plus a colour/material variant. With this on, only the "
-            + "mesh has to match, so a recolour of a garment you already own is flagged as a "
-            + "redundant glamour - which is the point of the plugin. Turn it off to require "
-            + "the variant to match too; you will see far fewer results.",
+            + "mesh has to match, so a recolour is flagged as a duplicate. Turn it off to require "
+            + "the recolour base to match too.",
             configuration.CountRecoloursAsDuplicates,
             value => configuration.CountRecoloursAsDuplicates = value);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        DrawSectionTitle("Hidden items");
+
+        DrawHiddenItems();
+    }
+
+    /// <summary>
+    /// The other half of the main window's right-click menu. Hiding is silent by design, so
+    /// this is where the count lives and where a hide made months ago can be undone without
+    /// having to remember which item it was.
+    /// </summary>
+    private void DrawHiddenItems()
+    {
+        var hiddenCount = configuration.HiddenCount;
+        var revealed = configuration.RevealedSlotCount;
+
+        DrawSetting(
+            "Show hidden items in every category",
+            "Right-clicking an item in the results hides it, and a hidden item is left out of "
+            + "the duplicate check entirely - so whatever it matched goes with it. Turn this on "
+            + "to list them all again with a [Hidden] tag.",
+            configuration.ShowHiddenItems,
+            value => configuration.ShowHiddenItems = value);
+
+        // "on this character" is not padding: hides follow the character, like the dresser
+        // they describe, and this is the only place that says so.
+        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.MutedText);
+        ImGui.TextUnformatted(hiddenCount switch
+        {
+            0 => "Nothing is hidden on this character.",
+            1 => "1 item is hidden on this character.",
+            _ => $"{hiddenCount} items are hidden on this character."
+        });
+
+        // Only worth mentioning when it is doing something the toggle above is not.
+        if (revealed > 0 && !configuration.ShowHiddenItems)
+            ImGui.TextUnformatted($"{revealed} section{(revealed == 1 ? " is" : "s are")} showing hidden items.");
+
+        ImGui.PopStyleColor();
+
+        if (hiddenCount == 0 && revealed == 0)
+            return;
+
+        ImGui.Spacing();
+
+        // Ctrl-held, the Dalamud convention for a button that cannot be undone. There is no
+        // record of what was hidden once this runs, so a stray click would cost real work.
+        var ctrl = ImGui.GetIO().KeyCtrl;
+        using (ImRaii.Disabled(!ctrl))
+        {
+            if (ImGui.Button("Unhide everything on this character"))
+                configuration.UnhideAll();
+        }
+
+        if (!ctrl)
+        {
+            ImGui.SameLine();
+            ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.MutedText);
+            ImGui.TextUnformatted("Hold Ctrl - this cannot be undone.");
+            ImGui.PopStyleColor();
+        }
     }
 
     private static void DrawSectionTitle(string title)
@@ -109,11 +167,41 @@ public class ConfigWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// One checkbox with its explanation underneath. Saving on change is what gives
-    /// Configuration.Save() its first caller, and bumping the revision is what makes the
-    /// results rebuild for settings that change them.
+    /// A checkbox whose label says the whole thing, for the settings that need no explaining.
+    /// </summary>
+    private void DrawSetting(string label, bool current, Action<bool> set)
+    {
+        DrawCheckbox(label, current, set);
+
+        ImGui.Spacing();
+    }
+
+    /// <summary>
+    /// One checkbox with its explanation underneath, for the settings whose consequences are
+    /// not obvious from the label.
     /// </summary>
     private void DrawSetting(string label, string help, bool current, Action<bool> set)
+    {
+        DrawCheckbox(label, current, set);
+
+        // Indent the help to clear the checkbox, so it reads as belonging to it rather than
+        // as a paragraph between two settings.
+        var indent = ImGui.GetFrameHeight() + ImGui.GetStyle().ItemInnerSpacing.X;
+
+        ImGui.Indent(indent);
+        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.MutedText);
+        ImGui.TextWrapped(help);
+        ImGui.PopStyleColor();
+        ImGui.Unindent(indent);
+
+        ImGui.Spacing();
+    }
+
+    /// <summary>
+    /// Saving on change is what gives Configuration.Save() its first caller, and bumping the
+    /// revision is what makes the results rebuild for settings that change them.
+    /// </summary>
+    private void DrawCheckbox(string label, bool current, Action<bool> set)
     {
         var value = current;
         if (ImGui.Checkbox(label, ref value))
@@ -121,13 +209,5 @@ public class ConfigWindow : Window, IDisposable
             set(value);
             configuration.Save();
         }
-
-        ImGui.Indent(ImGui.GetFrameHeight() + ImGui.GetStyle().ItemInnerSpacing.X);
-        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.MutedText);
-        ImGui.TextWrapped(help);
-        ImGui.PopStyleColor();
-        ImGui.Unindent(ImGui.GetFrameHeight() + ImGui.GetStyle().ItemInnerSpacing.X);
-
-        ImGui.Spacing();
     }
 }

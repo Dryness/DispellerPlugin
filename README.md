@@ -44,10 +44,13 @@ without having to open it again. Anything shown from that saved copy is labelled
 date it was taken, since the dresser may have changed since — open the dresser and the
 label clears.
 
+Right-click an item to hide it. A hidden item is left out of the duplicate check entirely,
+so whatever it matched disappears with it.
+
 `/dispeller config` opens the settings, as does the cog in the window's title bar and the
 gear beside the plugin in Dalamud's installer. From there the window can open with the
-Glamour Dresser, hide itself on a zone change, or be told to stop treating recolours as
-duplicates.
+Glamour Dresser, hide itself on a zone change, stop treating recolours as duplicates, or
+list hidden items again so they can be right-clicked back.
 
 ---
 

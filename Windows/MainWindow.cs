@@ -25,6 +25,12 @@ public class MainWindow : Window, IDisposable
     private int lastConfigRevision = Configuration.Revision;
     private bool collapseAllOnNextDraw = false;
 
+    /// <summary>
+    /// Slot category to force open on the next draw, set when a section's hidden items are
+    /// revealed from its context menu. One-shot: claimed by the first draw that sees it.
+    /// </summary>
+    private string? expandOnNextDraw;
+
     public MainWindow(Plugin plugin)
         : base("Dispeller Continued - Shared Model Analyzer", ImGuiWindowFlags.NoScrollbar)
     {
@@ -198,7 +204,9 @@ public class MainWindow : Window, IDisposable
         if (!child)
             return;
 
-        foreach (var group in sharedGroups.Where(g => g.Items.Count > 0))
+        // Empty groups are drawn too - a slot whose every match is hidden keeps an inert
+        // header rather than vanishing. See DrawSharedGroup.
+        foreach (var group in sharedGroups)
         {
             DrawSharedGroup(group);
             ImGui.Spacing();
@@ -209,11 +217,45 @@ public class MainWindow : Window, IDisposable
         collapseAllOnNextDraw = false;
     }
 
+    /// <summary>
+    /// The header's counts: what is on screen, how many distinct models those rows cover, and
+    /// how much of the slot is being held back. The hidden figure is always shown, including
+    /// as a zero - a number that only appears once something is hidden is a number nobody
+    /// thinks to look for.
+    /// </summary>
+    private static string FormatGroupCounts(SharedModelGroup group)
+    {
+        var items = group.Items.Count;
+        var models = group.ModelCount;
+
+        return $"{items} item{(items == 1 ? "" : "s")} | {models} model{(models == 1 ? "" : "s")} | {group.HiddenCount} hidden";
+    }
+
     private void DrawSharedGroup(SharedModelGroup group)
     {
         // Keyed on the slot category alone. Including the item count made the ID change
         // whenever the dresser did, so ImGui saw a new widget and collapsed it.
         using var id = ImRaii.PushId(group.SlotCategory);
+
+        // Everything after ### is the ID, everything before it is drawn - so the counts can
+        // change in the label without ImGui treating it as a different header and losing
+        // whether the user had it expanded.
+        var headerText = $"{group.SlotCategory} ({FormatGroupCounts(group)})###header";
+
+        // Claimed here rather than in the branch that uses it, so a reveal that fails to
+        // produce a live section cannot leave the request armed for the next slot to trip on.
+        var expand = expandOnNextDraw == group.SlotCategory;
+        if (expand)
+            expandOnNextDraw = null;
+
+        // A slot can end up with nothing left to show - hiding one of a pair takes both out.
+        // Dropping the section entirely would make it look as though the slot had never had
+        // any duplicates, so the header stays, greyed, still carrying its counts.
+        if (group.Items.Count == 0)
+        {
+            DrawInertGroupHeader(group, headerText);
+            return;
+        }
 
         // Get color based on slot category
         var groupColor = GetColorForSlot(group.SlotCategory);
@@ -222,24 +264,116 @@ public class MainWindow : Window, IDisposable
         ImGui.PushStyleColor(ImGuiCol.HeaderActive, groupColor);
         ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.AshBlack);
 
-        // Everything after ### is the ID, everything before it is drawn - so the count can
-        // change in the label without ImGui treating it as a different header and losing
-        // whether the user had it expanded.
-        var headerText = $"{group.SlotCategory} ({group.Items.Count} items)###header";
-
-        if (collapseAllOnNextDraw)
+        if (expand)
+            ImGui.SetNextItemOpen(true, ImGuiCond.Always);
+        else if (collapseAllOnNextDraw)
             ImGui.SetNextItemOpen(false, ImGuiCond.Always);
 
-        if (ImGui.CollapsingHeader(headerText))
-        {
-            ImGui.PopStyleColor(4);
+        var open = ImGui.CollapsingHeader(headerText);
+        ImGui.PopStyleColor(4);
 
+        // Both read ImGui's "last item" state, so they have to come before anything the body
+        // draws - and the tooltip before the popup, which starts a window and replaces it.
+        DrawGroupTooltip(group);
+        DrawGroupContextMenu(group);
+
+        if (open)
             DrawModelRuns(group, groupColor);
+    }
+
+    /// <summary>
+    /// A section with nothing left to show. Greyed and forced shut, but still right-clickable:
+    /// revealing what it is holding back is the only way to get the section back, so this is
+    /// the header that needs the menu most. ImRaii.Disabled would have been the tidier way to
+    /// make it inert and would have blocked exactly that.
+    /// </summary>
+    private void DrawInertGroupHeader(SharedModelGroup group, string headerText)
+    {
+        ImGui.PushStyleColor(ImGuiCol.Header, UiStyle.InertHeader);
+        ImGui.PushStyleColor(ImGuiCol.HeaderHovered, UiStyle.InertHeader);
+        ImGui.PushStyleColor(ImGuiCol.HeaderActive, UiStyle.InertHeader);
+        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.MutedText);
+
+        // Shut every frame, not just once: left-clicking it can toggle the stored state all it
+        // likes, and it will never open onto the nothing that is behind it.
+        ImGui.SetNextItemOpen(false, ImGuiCond.Always);
+        ImGui.CollapsingHeader(headerText);
+
+        ImGui.PopStyleColor(4);
+
+        DrawGroupTooltip(group);
+        DrawGroupContextMenu(group);
+    }
+
+    /// <summary>
+    /// Only speaks up when the section is holding something back - a tooltip on every header
+    /// saying nothing in particular is a tooltip people learn to ignore.
+    /// </summary>
+    private void DrawGroupTooltip(SharedModelGroup group)
+    {
+        if (group.HiddenCount == 0 || !ImGui.IsItemHovered())
+            return;
+
+        var plural = group.HiddenCount == 1 ? "" : "s";
+
+        ImGui.BeginTooltip();
+        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.MutedText);
+
+        if (plugin.Configuration.ShowHiddenItems)
+            ImGui.TextUnformatted($"{group.HiddenCount} hidden item{plural}, shown by the settings toggle");
+        else if (plugin.Configuration.IsSlotRevealed(group.SlotCategory))
+            ImGui.TextUnformatted($"Right-click to put {group.HiddenCount} item{plural} back out of sight");
+        else
+            ImGui.TextUnformatted($"Right-click to show {group.HiddenCount} hidden item{plural}");
+
+        ImGui.PopStyleColor();
+        ImGui.EndTooltip();
+    }
+
+    /// <summary>
+    /// Reveals one section's hidden items without a trip to the settings window. The settings
+    /// toggle is still there and still wins - it is the same switch thrown for every section
+    /// at once - so while it is on, this menu has nothing to offer.
+    /// </summary>
+    private void DrawGroupContextMenu(SharedModelGroup group)
+    {
+        if (!ImGui.BeginPopupContextItem("##groupctx"))
+            return;
+
+        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.LightMagenta);
+        ImGui.TextUnformatted(group.SlotCategory);
+        ImGui.PopStyleColor();
+        ImGui.Separator();
+
+        if (plugin.Configuration.ShowHiddenItems)
+        {
+            using var disabled = ImRaii.Disabled(true);
+            ImGui.MenuItem("Shown by the \"show hidden items\" setting");
+        }
+        else if (group.HiddenCount == 0)
+        {
+            using var disabled = ImRaii.Disabled(true);
+            ImGui.MenuItem("Nothing hidden here");
+        }
+        else if (plugin.Configuration.IsSlotRevealed(group.SlotCategory))
+        {
+            if (ImGui.MenuItem($"Hide {group.HiddenCount} item{(group.HiddenCount == 1 ? "" : "s")} again"))
+                plugin.Configuration.SetSlotRevealed(group.SlotCategory, false);
         }
         else
         {
-            ImGui.PopStyleColor(4);
+            if (ImGui.MenuItem($"Show {group.HiddenCount} hidden item{(group.HiddenCount == 1 ? "" : "s")}"))
+            {
+                plugin.Configuration.SetSlotRevealed(group.SlotCategory, true);
+
+                // Otherwise the section comes back collapsed and the reveal looks like it did
+                // nothing but change a count - and a section that was inert has never been
+                // expanded, so there is no remembered state to fall back on.
+                expandOnNextDraw = group.SlotCategory;
+            }
         }
+
+        ImGui.EndPopup();
     }
 
     /// <summary>
@@ -280,26 +414,65 @@ public class MainWindow : Window, IDisposable
         }
     }
 
+    /// <summary>
+    /// Height of one result row - the icon's size, which is what set the row height before the
+    /// Selectable existed too.
+    /// </summary>
+    private const float RowHeight = 32f;
+
     private void DrawItem(SharedModelItem item, List<SharedModelItem> allItemsInSlot)
     {
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 20);
 
-        var matchingModelCount = allItemsInSlot.Count(i => i.ModelId == item.ModelId);
+        var rowStart = ImGui.GetCursorPos();
 
+        // The row is laid down as a single full-width Selectable first, and the icon, name,
+        // dye circles and tags are then drawn back over it from the same cursor position.
+        //
+        // This is what the context menu needs: BeginPopupContextItem binds to the *last item
+        // drawn*, and the row used to be four separate widgets - so a menu would have bound
+        // to the [Armoire] tag alone, and only on the rows that happen to have one. One item
+        // for the whole row also means one hover target, hence one tooltip below instead of
+        // the three that used to hang off the individual pieces.
+        ImGui.PushStyleColor(ImGuiCol.HeaderHovered, UiStyle.RowHover);
+        ImGui.PushStyleColor(ImGuiCol.HeaderActive, UiStyle.RowHover);
+        ImGui.Selectable(
+            $"##row{item.ItemId}",
+            false,
+            ImGuiSelectableFlags.None,
+            new Vector2(ImGui.GetContentRegionAvail().X, RowHeight));
+        ImGui.PopStyleColor(2);
+
+        // Where the next row belongs. Drawing the contents rewinds the cursor, so it has to
+        // be put back deliberately rather than left wherever the last tag ended up.
+        var afterRow = ImGui.GetCursorPos();
+
+        // Tooltip before the popup: both read ImGui's "last item" state, and beginning the
+        // popup starts a window, which replaces it.
+        DrawItemTooltip(item, allItemsInSlot);
+        DrawItemContextMenu(item);
+
+        ImGui.SetCursorPos(rowStart);
+        DrawItemContents(item);
+        ImGui.SetCursorPos(afterRow);
+    }
+
+    /// <summary>
+    /// The visible part of a row. Drawn over the Selectable, so nothing in here may be
+    /// interactive - an interactive widget would steal the hover from the row and take the
+    /// context menu with it.
+    /// </summary>
+    private void DrawItemContents(SharedModelItem item)
+    {
         // Try to get icon. The dresser's own IconId can be one the game cannot resolve for
         // HQ entries, so fall back to the icon the Item sheet gives for the base item.
         var icon = GetIcon((uint)item.IconId) ?? GetIcon(GetItemIconFromLumina(item.ItemId));
         if (icon != null)
-        {
-            ImGui.Image(icon.Handle, new Vector2(32, 32));
-            ImGui.SameLine();
-        }
+            ImGui.Image(icon.Handle, new Vector2(RowHeight, RowHeight));
         else
-        {
-            // Draw a placeholder if icon is missing
-            ImGui.Dummy(new Vector2(32, 32));
-            ImGui.SameLine();
-        }
+            ImGui.Dummy(new Vector2(RowHeight, RowHeight)); // placeholder, so names stay aligned
+
+        ImGui.SameLine();
 
         // Get display name - fallback if empty. HQ entries carry the game's own HQ glyph,
         // since the Item sheet name is identical for both qualities.
@@ -310,30 +483,26 @@ public class MainWindow : Window, IDisposable
         // No per-row "shared model" marker: the scan only keeps items that already share a
         // model, so every row would carry one. The vertical bar down each run is what shows
         // which rows group together.
-        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.BrightWhite);
+        //
+        // A hidden row is only on screen because "show hidden items" is on. Muting the name
+        // says so at a glance, rather than leaving it to the tag at the end of the line.
+        ImGui.PushStyleColor(ImGuiCol.Text, item.IsHidden ? UiStyle.MutedText : UiStyle.BrightWhite);
         ImGui.TextUnformatted(displayName);
         ImGui.PopStyleColor();
-
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.BeginTooltip();
-            ImGui.TextUnformatted($"{matchingModelCount} items match model: {item.ModelId}");
-            ImGui.EndTooltip();
-        }
 
         // Draw dye slot indicators (circles) - similar to Glamaholic
         if (item.DyeCount > 0)
         {
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 5);
-            
+
             var drawList = ImGui.GetWindowDrawList();
             var basePos = ImGui.GetCursorScreenPos();
             var circleRadius = 4.0f;
             var circleSpacing = 8.0f;
             // Use white/light gray for empty circles (visible on dark background)
             var circleColor = ImGui.ColorConvertFloat4ToU32(new Vector4(0.85f, 0.85f, 0.85f, 1.0f));
-            
+
             // Draw circles for each dye slot (1 or 2)
             for (int i = 0; i < item.DyeCount; i++)
             {
@@ -341,20 +510,13 @@ public class MainWindow : Window, IDisposable
                 // Draw empty circle outline (similar to Glamaholic - empty circles indicate available dye slots)
                 drawList.AddCircle(circleCenter, circleRadius + 1, circleColor);
             }
-            
-            // The invisible button both reserves the circles' width on this line and
-            // gives them a hover target. Do not advance the cursor past it by hand:
-            // ImGui has already wrapped to the next row, so any SetCursorPosX here
-            // indents the *following* item instead of this one.
-            var circlesWidth = (item.DyeCount * circleSpacing) + 4;
-            ImGui.InvisibleButton($"dye_{item.ItemId}", new Vector2(circlesWidth, circleRadius * 2 + 4));
 
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.BeginTooltip();
-                ImGui.TextUnformatted($"{item.DyeCount} dye slot{(item.DyeCount > 1 ? "s" : "")} available");
-                ImGui.EndTooltip();
-            }
+            // A Dummy, not an InvisibleButton: this only has to reserve the circles' width on
+            // the line now that the row's Selectable owns the hover. Do not advance the cursor
+            // past it by hand - ImGui has already wrapped to the next row, so any SetCursorPosX
+            // here indents the *following* item instead of this one.
+            var circlesWidth = (item.DyeCount * circleSpacing) + 4;
+            ImGui.Dummy(new Vector2(circlesWidth, circleRadius * 2 + 4));
         }
 
         // Draw Armoire marker if item can be stored in Armoire
@@ -362,18 +524,80 @@ public class MainWindow : Window, IDisposable
         {
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 5);
-            
+
             ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.SoftMagenta);
             ImGui.TextUnformatted("[Armoire]");
             ImGui.PopStyleColor();
-            
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.BeginTooltip();
-                ImGui.TextUnformatted("This item can be stored in your Armoire instead of the Glamour Dresser!");
-                ImGui.EndTooltip();
-            }
         }
+
+        if (item.IsHidden)
+        {
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 5);
+
+            ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.MutedText);
+            ImGui.TextUnformatted("[Hidden]");
+            ImGui.PopStyleColor();
+        }
+    }
+
+    /// <summary>
+    /// One tooltip for the whole row. The dye-slot and Armoire notes used to hang off their
+    /// own widgets; with the row a single item they have nowhere else to live, and gathering
+    /// them means the row explains itself in one hover rather than three.
+    /// </summary>
+    private void DrawItemTooltip(SharedModelItem item, List<SharedModelItem> allItemsInSlot)
+    {
+        if (!ImGui.IsItemHovered())
+            return;
+
+        var matchingModelCount = allItemsInSlot.Count(i => i.ModelId == item.ModelId);
+
+        ImGui.BeginTooltip();
+        ImGui.TextUnformatted($"{matchingModelCount} items match model: {item.ModelId}");
+
+        if (item.DyeCount > 0)
+            ImGui.TextUnformatted($"{item.DyeCount} dye slot{(item.DyeCount > 1 ? "s" : "")} available");
+
+        if (item.CanGoInArmoire)
+            ImGui.TextUnformatted("This item can be stored in your Armoire instead of the Glamour Dresser!");
+
+        // The only advertisement the feature gets. Right-click on a list row is not something
+        // anyone tries unprompted.
+        ImGui.Separator();
+        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.MutedText);
+        ImGui.TextUnformatted(item.IsHidden
+            ? "Right-click to show this item again"
+            : "Right-click to hide this item");
+        ImGui.PopStyleColor();
+
+        ImGui.EndTooltip();
+    }
+
+    private void DrawItemContextMenu(SharedModelItem item)
+    {
+        // Raw ImGui rather than ImRaii: EndPopup must be called only when Begin returned
+        // true, which is the opposite of the child/table rule ImRaii exists to handle.
+        if (!ImGui.BeginPopupContextItem($"##rowctx{item.ItemId}"))
+            return;
+
+        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.LightMagenta);
+        ImGui.TextUnformatted(string.IsNullOrWhiteSpace(item.Name) ? $"Item #{item.ItemId}" : item.Name);
+        ImGui.PopStyleColor();
+        ImGui.Separator();
+
+        if (item.IsHidden)
+        {
+            if (ImGui.MenuItem("Show this item again"))
+                plugin.Configuration.SetHidden(item.ItemId, false);
+        }
+        else
+        {
+            if (ImGui.MenuItem("Hide this item"))
+                plugin.Configuration.SetHidden(item.ItemId, true);
+        }
+
+        ImGui.EndPopup();
     }
 
     /// <summary>
@@ -469,12 +693,36 @@ public class MainWindow : Window, IDisposable
                 })
                 .ToList();
 
-            Plugin.Log.Information($"Scan: {dresserItems.Count} raw, {uniqueItems.Count} unique, {validItems.Count} equippable, {outfitCount} outfits");
+            // Hidden items come out BEFORE the shared-model test below, not after it. Hiding
+            // one half of a pair has to take the other half with it: the survivor is no longer
+            // redundant with anything, and leaving it on screen as a run of one would be a lie
+            // about what the plugin found.
+            //
+            // "Show hidden items" switches the filter off wholesale rather than appending the
+            // hidden rows back on, so what is on screen is exactly the unfiltered picture with
+            // the hidden ones tagged - and unhiding one changes nothing but its tag.
+            // The filter is per slot, not global: a section header's right-click reveals just
+            // that section, and the settings toggle is the same switch thrown for all of them
+            // at once. ShowsHiddenIn answers both.
+            var hiddenCount = validItems.Count(item => plugin.Configuration.IsHidden(item.ItemId));
+            var visibleItems = validItems
+                .Where(item => !plugin.Configuration.IsHidden(item.ItemId)
+                               || plugin.Configuration.ShowsHiddenIn(GetSlotName(item.ItemId)))
+                .ToList();
+
+            // Per slot, so each section header can report what it is holding back - and so a
+            // section that has nothing left to show can still say why.
+            var hiddenBySlot = validItems
+                .Where(item => plugin.Configuration.IsHidden(item.ItemId))
+                .GroupBy(item => GetSlotName(item.ItemId))
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            Plugin.Log.Information($"Scan: {dresserItems.Count} raw, {uniqueItems.Count} unique, {validItems.Count} equippable, {outfitCount} outfits, {hiddenCount} hidden");
             foreach (var g in uniqueItems.GroupBy(i => GetSlotName(i.ItemId)).OrderBy(g => GetSlotOrder(g.Key)))
                 Plugin.Log.Debug($"Scan category {g.Key}: {g.Count()}");
 
             // First, identify items with shared models by grouping by slot + model
-            var itemsWithSharedModels = validItems
+            var itemsWithSharedModels = visibleItems
                 .GroupBy(item => {
                     var slotName = GetSlotName(item.ItemId);
                     var modelId = GetItemModel(item.ItemId);
@@ -520,7 +768,10 @@ public class MainWindow : Window, IDisposable
                                 ModelId = GetItemModel(item.ItemId),
                                 DyeCount = dyeCount,
                                 CanGoInArmoire = canGoInArmoire,
-                                IsHq = item.ItemId >= 1_000_000
+                                IsHq = item.ItemId >= 1_000_000,
+                                // Only ever true while ShowHiddenItems is on - otherwise a
+                                // hidden item never reaches this far.
+                                IsHidden = plugin.Configuration.IsHidden(item.ItemId)
                             };
                         })
                         .ToList();
@@ -529,15 +780,43 @@ public class MainWindow : Window, IDisposable
                     {
                         ModelId = "", // Not used for slot-based grouping
                         SlotCategory = g.Key,
-                        Items = sortedItems
+                        Items = sortedItems,
+                        ModelCount = sortedItems.Select(i => i.ModelId).Distinct().Count(),
+                        HiddenCount = hiddenBySlot.GetValueOrDefault(g.Key)
                     };
                 })
                 .OrderBy(g => GetSlotOrder(g.SlotCategory)) // Sort slots in logical order
                 .ToList();
 
+            // A slot can hide its way down to nothing - hiding one of a pair drops both, and
+            // that was the slot's only match. It still gets a header, so the section reports
+            // what became of it instead of disappearing. DrawSharedGroup draws these inert.
+            var emptied = hiddenBySlot
+                .Where(entry => !grouped.Any(g => g.SlotCategory == entry.Key))
+                .Select(entry => new SharedModelGroup
+                {
+                    SlotCategory = entry.Key,
+                    HiddenCount = entry.Value
+                });
+
+            grouped = grouped
+                .Concat(emptied)
+                .OrderBy(g => GetSlotOrder(g.SlotCategory))
+                .ToList();
+
             sharedGroups = grouped;
             var totalItems = grouped.Sum(g => g.Items.Count);
-            statusMessage = $"Found {totalItems} items with shared models across {grouped.Count} slot categories!";
+            // Only the categories that actually have something in them. The emptied ones above
+            // are on screen to explain themselves, not because they are a result.
+            var categoryCount = grouped.Count(g => g.Items.Count > 0);
+            statusMessage = $"Found {totalItems} items with shared models across {categoryCount} slot categories!";
+
+            // Hidden items are silent by design, which is exactly why the count has to be
+            // stated somewhere - otherwise a result that shrank months ago has no explanation
+            // on screen at all. Whether any of them are currently revealed is a per-section
+            // question, and the section headers answer it.
+            if (hiddenCount > 0)
+                statusMessage += $" ({hiddenCount} hidden)";
         }
         catch (Exception ex)
         {
@@ -705,6 +984,12 @@ public class SharedModelGroup
     public string ModelId { get; set; } = string.Empty;
     public string SlotCategory { get; set; } = string.Empty;
     public List<SharedModelItem> Items { get; set; } = [];
+
+    /// <summary>Distinct models across <see cref="Items"/> - how many runs the section has.</summary>
+    public int ModelCount { get; set; }
+
+    /// <summary>Hidden items in this slot, whether or not any of them are on screen.</summary>
+    public int HiddenCount { get; set; }
 }
 
 public class SharedModelItem
@@ -717,4 +1002,5 @@ public class SharedModelItem
     public byte DyeCount { get; set; }
     public bool CanGoInArmoire { get; set; }
     public bool IsHq { get; set; }
+    public bool IsHidden { get; set; }
 }

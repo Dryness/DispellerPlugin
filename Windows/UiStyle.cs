@@ -21,8 +21,17 @@ internal static class UiStyle
     internal static readonly Vector4 LightPurple    = new(0.65f, 0.60f, 0.80f, 1.00f);  // pastel purple for accessories (lighter, softer)
     internal static readonly Vector4 LightMintGreen = new(0.50f, 0.85f, 0.75f, 1.00f);  // minty green for weapons
 
-    // Greyed-out explanatory text under a setting.
+    // Greyed-out explanatory text under a setting, and for a row that is only on screen
+    // because "show hidden items" is on.
     internal static readonly Vector4 MutedText = new(0.62f, 0.60f, 0.68f, 1.00f);
+
+    // A section header with nothing left to show. Neutral rather than the slot's own colour,
+    // so it reads as switched off instead of as a dimmer version of an active section.
+    internal static readonly Vector4 InertHeader = new(0.26f, 0.25f, 0.30f, 1.00f);
+
+    // Hover wash behind a result row. Deliberately faint: the row's job is to be readable,
+    // and the highlight only has to say "this is the one the right-click will act on".
+    internal static readonly Vector4 RowHover = new(0.78f, 0.37f, 0.64f, 0.22f);
 
     internal const float HeaderHeight = 60f;
     private const float TitleFontScale = 1.6f;
