@@ -8,10 +8,10 @@ equipped. Dispeller scans the dresser, groups items by equipment slot and model,
 you the groups where more than one item resolves to the same appearance. Keep one, dispel
 the rest, free up space for more.
 
-Matching is on the *mesh*, so recolours and material variants count as redundant. HQ
-entries are matched against their normal-quality twins and marked with the HQ glyph. Items
-that can live in the Armoire instead are flagged. Outfit bundles are not yet supported for
-matching.
+Matching is on the *mesh* by default, so recolours and material variants count as redundant;
+a setting tightens it to require the variant to match too. HQ entries are matched against
+their normal-quality twins and marked with the HQ glyph. Items that can live in the Armoire
+instead are flagged. Outfit bundles are not yet supported for matching.
 
 This is a fork of [pupwife/DispellerPlugin](https://github.com/pupwife/DispellerPlugin),
 maintained for personal use only.
@@ -44,6 +44,11 @@ Your dresser is saved per character, so the results are there the next time you 
 without having to open it again. Anything shown from that saved copy is labelled with the
 date it was taken, since the dresser may have changed since — open the dresser and the
 label clears.
+
+`/dispeller config` opens the settings, as does the cog in the window's title bar and the
+gear beside the plugin in Dalamud's installer. From there the window can open with the
+Glamour Dresser, hide itself on a zone change, or be told to stop treating recolours as
+duplicates.
 
 ---
 

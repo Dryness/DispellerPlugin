@@ -1,65 +1,45 @@
-using System.Collections.Generic;
-using Lumina.Excel.Sheets;
-
 namespace Dispeller.Services;
 
 public class ModelDetectionService
 {
     /// <summary>
-    /// Extract model information from Item.ModelMain
-    /// Based on Glamaholic's AlternativeFinder.ModelInfo
+    /// Extract model information from Item.ModelMain.
+    /// Based on Glamaholic's AlternativeFinder.ModelInfo.
     /// </summary>
-    public static (ushort, ushort, ushort, ushort) ExtractModelInfo(ulong raw)
+    /// <param name="raw">The packed Item.ModelMain value.</param>
+    /// <param name="ignoreVariant">
+    /// Drop the trailing variant, so a recolour compares equal to the original. There is no
+    /// default: which of the two a comparison wants is a policy question, and the answer is
+    /// now a user setting rather than something to assume here.
+    /// </param>
+    public static (ushort, ushort, ushort, ushort) ExtractModelInfo(ulong raw, bool ignoreVariant)
     {
         var primaryKey = (ushort)(raw & 0xFFFF);
         var secondaryKey = (ushort)((raw >> 16) & 0xFFFF);
         var weaponVariant = (ushort)((raw >> 32) & 0xFFFF);
 
-        // Gear packs ModelMain as modelId | variant << 16, leaving bits 32+ zero. Weapons
-        // use three fields: primary | secondary << 16 | variant << 32. A non-zero third
-        // field is therefore what distinguishes a weapon from a piece of gear.
-        //
+        // Gear packs ModelMain as modelId | variant << 16 - so for gear, secondaryKey IS the
+        // variant. Weapons use three fields: primary | secondary << 16 | variant << 32, so
+        // their mesh is the first two. A non-zero third field is what distinguishes a weapon
+        // from a piece of gear; there is no slot information in the raw value.
+        var isWeapon = weaponVariant != 0;
+
         // In both cases the trailing variant only swaps materials and colours - the mesh is
-        // the leading field(s). This plugin deliberately matches on the mesh, so a recolour
-        // still counts as a shared model. Gear has always been compared that way; weapons
-        // previously compared all four fields, which made a match all but impossible.
-        if (weaponVariant != 0)
-            return (primaryKey, secondaryKey, 0, 0);
-
-        return (primaryKey, 0, 0, 0);
-    }
-
-    /// <summary>
-    /// Check if two items share the same model
-    /// </summary>
-    public static bool ShareModel(Item item1, Item item2)
-    {
-        var model1 = ExtractModelInfo(item1.ModelMain);
-        var model2 = ExtractModelInfo(item2.ModelMain);
-
-        return model1 == model2;
-    }
-
-    /// <summary>
-    /// Get all items that share a model with the given item
-    /// </summary>
-    public static List<Item> FindSharedModelItems(Item targetItem)
-    {
-        var targetModel = ExtractModelInfo(targetItem.ModelMain);
-        var sharedItems = new List<Item>();
-
-        foreach (var item in Plugin.DataManager.GetExcelSheet<Item>()!)
+        // the leading field(s). Matching on the mesh alone is what makes a recolour count as
+        // a redundant glamour. Weapons previously compared all four fields, which made a
+        // match all but impossible: 101 distinct models across 101 main hands.
+        if (ignoreVariant)
         {
-            if (item.EquipSlotCategory.RowId != targetItem.EquipSlotCategory.RowId)
-                continue;
+            if (isWeapon)
+                return (primaryKey, secondaryKey, 0, 0);
 
-            if (ExtractModelInfo(item.ModelMain) == targetModel)
-            {
-                sharedItems.Add(item);
-            }
+            return (primaryKey, 0, 0, 0);
         }
 
-        return sharedItems;
+        if (isWeapon)
+            return (primaryKey, secondaryKey, weaponVariant, 0);
+
+        return (primaryKey, secondaryKey, 0, 0);
     }
 
     /// <summary>

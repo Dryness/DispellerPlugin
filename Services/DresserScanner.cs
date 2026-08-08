@@ -48,6 +48,17 @@ public class DresserScanner : IDisposable
     private const int PollIntervalFrames = 30;
     private int _framesSincePoll = PollIntervalFrames;
 
+    /// <summary>Raised on the frame the Glamour Dresser addon becomes readable.</summary>
+    public event Action? DresserOpened;
+
+    /// <summary>Raised on the frame the Glamour Dresser addon stops being readable.</summary>
+    public event Action? DresserClosed;
+
+    // Edge state for the two events above. They must be edge-triggered, not level-triggered:
+    // a handler that reacts to "the dresser is open" every frame would reopen a window the
+    // instant the user closed it.
+    private bool _addonWasReady = false;
+
     private bool _disposed = false;
 
     public DresserScanner()
@@ -67,7 +78,19 @@ public class DresserScanner : IDisposable
                 SwitchCharacter(contentId);
 
             var agent = AgentMiragePrismPrismBox.Instance();
-            if (agent == null || !agent->IsAddonReady() || agent->Data == null)
+            var addonReady = agent != null && agent->IsAddonReady() && agent->Data != null;
+
+            if (addonReady != _addonWasReady)
+            {
+                _addonWasReady = addonReady;
+
+                if (addonReady)
+                    DresserOpened?.Invoke();
+                else
+                    DresserClosed?.Invoke();
+            }
+
+            if (!addonReady)
             {
                 // Arm the next poll so opening the dresser reads it on the first frame the
                 // addon is ready, rather than waiting out the interval.

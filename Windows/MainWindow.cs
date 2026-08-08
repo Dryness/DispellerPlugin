@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Text;
+using Dalamud.Interface;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
@@ -21,19 +22,8 @@ public class MainWindow : Window, IDisposable
     private List<SharedModelGroup>? sharedGroups;
     private string statusMessage = "Open your Glamour Dresser to get started!";
     private int lastGeneration = DresserScanner.Generation;
+    private int lastConfigRevision = Configuration.Revision;
     private bool collapseAllOnNextDraw = false;
-    
-    // Darker purple + soft magenta + text colors
-    private static readonly Vector4 DarkerPurple = new(0.28f, 0.20f, 0.45f, 1.00f);  // deep purple
-    private static readonly Vector4 SoftMagenta  = new(0.78f, 0.37f, 0.64f, 1.00f);  // soft magenta
-    private static readonly Vector4 HeaderEdge   = new(0.20f, 0.15f, 0.35f, 1.00f);  // even darker edge
-    private static readonly Vector4 BrightWhite  = new(1.00f, 1.00f, 1.00f, 1.00f);  // white for most text
-    private static readonly Vector4 AshBlack  = new(0.10f, 0.10f, 0.10f, 1.00f);  // ash black for dropdown header text only
-    
-    // Light variants for UI elements
-    private static readonly Vector4 LightMagenta = new(0.88f, 0.47f, 0.74f, 1.00f);  // lighter magenta (pink) for main gear
-    private static readonly Vector4 LightPurple = new(0.65f, 0.60f, 0.80f, 1.00f);  // pastel purple for accessories (lighter, softer)
-    private static readonly Vector4 LightMintGreen = new(0.50f, 0.85f, 0.75f, 1.00f);  // minty green for weapons
 
     public MainWindow(Plugin plugin)
         : base("Dispeller Continued - Shared Model Analyzer", ImGuiWindowFlags.NoScrollbar)
@@ -46,12 +36,59 @@ public class MainWindow : Window, IDisposable
 
         this.plugin = plugin;
 
+        TitleBarButtons.Add(new TitleBarButton
+        {
+            Icon = FontAwesomeIcon.Cog,
+            IconOffset = new Vector2(1.5f, 1),
+            Click = _ => plugin.ToggleConfigUi(),
+            ShowTooltip = () =>
+            {
+                ImGui.BeginTooltip();
+                ImGui.TextUnformatted("Settings");
+                ImGui.EndTooltip();
+            },
+        });
+
         Plugin.ClientState.Login += OnLogin;
+        Plugin.ClientState.TerritoryChanged += OnTerritoryChanged;
+        plugin.DresserScanner.DresserOpened += OnDresserOpened;
+        plugin.DresserScanner.DresserClosed += OnDresserClosed;
     }
 
     public void Dispose()
     {
         Plugin.ClientState.Login -= OnLogin;
+        Plugin.ClientState.TerritoryChanged -= OnTerritoryChanged;
+        plugin.DresserScanner.DresserOpened -= OnDresserOpened;
+        plugin.DresserScanner.DresserClosed -= OnDresserClosed;
+    }
+
+    /// <summary>
+    /// Hides - never closes for good. <c>/dispeller</c> and the installer's button both bring
+    /// it straight back, so this is safe to leave on.
+    /// </summary>
+    private void OnTerritoryChanged(uint territory)
+    {
+        if (plugin.Configuration.HideOnZoneChange)
+            IsOpen = false;
+    }
+
+    // Both of these are driven by DresserScanner's edge-triggered events, so the window only
+    // moves at the moment the dresser opens or closes. Reacting to "the dresser is open"
+    // every frame instead would make the window impossible to close while standing at one.
+    private void OnDresserOpened()
+    {
+        if (plugin.Configuration.OpenWithGlamourDresser)
+            IsOpen = true;
+    }
+
+    private void OnDresserClosed()
+    {
+        // Gated on the parent as well as on its own toggle. Hiding on the way out is a
+        // sub-option of opening on the way in, and the settings window only offers it while
+        // the parent is on - so it must not keep acting once the parent is switched off.
+        if (plugin.Configuration.OpenWithGlamourDresser && plugin.Configuration.HideWhenLeavingGlamourDresser)
+            IsOpen = false;
     }
 
     /// <summary>
@@ -71,8 +108,10 @@ public class MainWindow : Window, IDisposable
     {
         // The cache re-reads itself while the dresser is open. Rebuild when its contents
         // have actually changed - opening the dresser, changing its view, depositing or
-        // retrieving - so the results never quietly describe an older read.
-        if (DresserScanner.Generation != lastGeneration)
+        // retrieving - so the results never quietly describe an older read. A settings change
+        // rebuilds too: cheaper than working out which settings the results depend on, and it
+        // cannot leave stale results on screen.
+        if (DresserScanner.Generation != lastGeneration || Configuration.Revision != lastConfigRevision)
             BuildGroups();
 
         // Pink gradient header
@@ -108,48 +147,11 @@ public class MainWindow : Window, IDisposable
     private static float GetFooterHeight()
         => 1 + ImGui.GetStyle().ItemSpacing.Y + 10 + ImGui.GetTextLineHeight();
 
-    private const float HeaderHeight = 60f;
-    private const float TitleFontScale = 1.6f;
-
     private void DrawHeader()
     {
-        var drawList = ImGui.GetWindowDrawList();
-        var origin = ImGui.GetCursorScreenPos();
-
-        // Span the full window width. Anchoring to the window rather than the cursor keeps
-        // the band flush with both edges instead of inset by the padding on the left and
-        // overhanging by the same amount on the right.
-        var left = ImGui.GetWindowPos().X;
-        var width = ImGui.GetWindowSize().X;
-
-        drawList.AddRectFilledMultiColor(
-            new Vector2(left, origin.Y),
-            new Vector2(left + width, origin.Y + HeaderHeight),
-            ImGui.ColorConvertFloat4ToU32(SoftMagenta),
-            ImGui.ColorConvertFloat4ToU32(DarkerPurple),
-            ImGui.ColorConvertFloat4ToU32(DarkerPurple),
-            ImGui.ColorConvertFloat4ToU32(SoftMagenta)
-        );
-
         // The game font has no emoji, so the original sparkles rendered as nothing at all.
         // SeIconChar glyphs are drawn from the game's own font and scale with it.
-        var title = $"{(char)SeIconChar.Hyadelyn} Dispeller {(char)SeIconChar.Hyadelyn}";
-
-        // Measure at the scale it will be drawn at - SetWindowFontScale feeds CalcTextSize.
-        ImGui.SetWindowFontScale(TitleFontScale);
-        var titleSize = ImGui.CalcTextSize(title);
-
-        ImGui.SetCursorPosX((width - titleSize.X) / 2);
-        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (HeaderHeight - titleSize.Y) / 2);
-
-        ImGui.PushStyleColor(ImGuiCol.Text, BrightWhite);
-        ImGui.TextUnformatted(title);
-        ImGui.PopStyleColor();
-        ImGui.SetWindowFontScale(1.0f);
-
-        // Land exactly on the bottom edge of the band. Letting the text's own advance stand,
-        // then nudging it with spacings, was what left dead space inside and below the band.
-        ImGui.SetCursorScreenPos(new Vector2(origin.X, origin.Y + HeaderHeight));
+        UiStyle.DrawHeaderBand($"{(char)SeIconChar.Hyadelyn} Dispeller {(char)SeIconChar.Hyadelyn}");
     }
 
     private void DrawStatus()
@@ -157,7 +159,7 @@ public class MainWindow : Window, IDisposable
         var centerPos = (ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(statusMessage).X) / 2;
         ImGui.SetCursorPosX(centerPos);
         
-        ImGui.PushStyleColor(ImGuiCol.Text, BrightWhite);
+        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.BrightWhite);
         ImGui.TextUnformatted(statusMessage);
         ImGui.PopStyleColor();
     }
@@ -176,7 +178,7 @@ public class MainWindow : Window, IDisposable
         var centerPos = (ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(message).X) / 2;
         ImGui.SetCursorPosX(centerPos);
 
-        ImGui.PushStyleColor(ImGuiCol.Text, LightPurple);
+        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.LightPurple);
         ImGui.TextUnformatted(message);
         ImGui.PopStyleColor();
     }
@@ -219,7 +221,7 @@ public class MainWindow : Window, IDisposable
         ImGui.PushStyleColor(ImGuiCol.Header, groupColor);
         ImGui.PushStyleColor(ImGuiCol.HeaderHovered, groupColor);
         ImGui.PushStyleColor(ImGuiCol.HeaderActive, groupColor);
-        ImGui.PushStyleColor(ImGuiCol.Text, AshBlack);
+        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.AshBlack);
 
         // Everything after ### is the ID, everything before it is drawn - so the count can
         // change in the label without ImGui treating it as a different header and losing
@@ -309,7 +311,7 @@ public class MainWindow : Window, IDisposable
         // No per-row "shared model" marker: the scan only keeps items that already share a
         // model, so every row would carry one. The vertical bar down each run is what shows
         // which rows group together.
-        ImGui.PushStyleColor(ImGuiCol.Text, BrightWhite);
+        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.BrightWhite);
         ImGui.TextUnformatted(displayName);
         ImGui.PopStyleColor();
 
@@ -362,7 +364,7 @@ public class MainWindow : Window, IDisposable
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 5);
             
-            ImGui.PushStyleColor(ImGuiCol.Text, SoftMagenta);
+            ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.SoftMagenta);
             ImGui.TextUnformatted("[Armoire]");
             ImGui.PopStyleColor();
             
@@ -405,7 +407,7 @@ public class MainWindow : Window, IDisposable
         var centerPos = (ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(message).X) / 2;
         ImGui.SetCursorPosX(centerPos);
         
-        ImGui.PushStyleColor(ImGuiCol.Text, BrightWhite);
+        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.BrightWhite);
         ImGui.TextUnformatted(message);
         ImGui.PopStyleColor();
     }
@@ -418,6 +420,7 @@ public class MainWindow : Window, IDisposable
     private void BuildGroups()
     {
         lastGeneration = DresserScanner.Generation;
+        lastConfigRevision = Configuration.Revision;
 
         try
         {
@@ -534,7 +537,7 @@ public class MainWindow : Window, IDisposable
         if (!sheet.TryGetRow(BaseItemId(itemId), out var item))
             return "Unknown";
 
-        var model = ModelDetectionService.ExtractModelInfo(item.ModelMain);
+        var model = ModelDetectionService.ExtractModelInfo(item.ModelMain, plugin.Configuration.CountRecoloursAsDuplicates);
         return ModelDetectionService.GetModelIdString(model);
     }
 
@@ -661,23 +664,23 @@ public class MainWindow : Window, IDisposable
         // Accessories - purple
         if (slotName == "Ears" || slotName == "Neck" || slotName == "Wrists" || slotName == "Ring")
         {
-            return LightPurple;
+            return UiStyle.LightPurple;
         }
         
         // Main gear - pink/magenta
         if (slotName == "Head" || slotName == "Body" || slotName == "Gloves" || slotName == "Legs" || slotName == "Feet")
         {
-            return LightMagenta;
+            return UiStyle.LightMagenta;
         }
         
         // Weapons - minty green
         if (slotName == "Main Hand" || slotName == "Off Hand")
         {
-            return LightMintGreen;
+            return UiStyle.LightMintGreen;
         }
         
         // Default to purple if unknown
-        return LightPurple;
+        return UiStyle.LightPurple;
     }
 }
 

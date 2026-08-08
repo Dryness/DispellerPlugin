@@ -1,3 +1,4 @@
+using System;
 using Dalamud.Game.Command;
 using Dalamud.IoC;
 using Dalamud.Plugin;
@@ -26,26 +27,29 @@ public sealed class Plugin : IDalamudPlugin
 
     public readonly WindowSystem WindowSystem = new("DispellerContinued");
     private MainWindow MainWindow { get; init; }
+    private ConfigWindow ConfigWindow { get; init; }
 
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
+        // Built before the windows: MainWindow subscribes to its open/close events.
         DresserScanner = new DresserScanner();
 
+        ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
 
+        WindowSystem.AddWindow(ConfigWindow);
         WindowSystem.AddWindow(MainWindow);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open Dispeller Continued - Find shared models in your glamour dresser!"
+            HelpMessage = "Open Dispeller Continued - Find shared models in your glamour dresser! Use \"/dispeller config\" for settings."
         });
 
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
-        // No separate settings window, so the installer's gear opens the main UI.
-        PluginInterface.UiBuilder.OpenConfigUi += ToggleMainUi;
+        PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
 
         Log.Information($"===Dispeller Continued plugin loaded! Ready to find shared models!===");
     }
@@ -54,11 +58,12 @@ public sealed class Plugin : IDalamudPlugin
     {
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
-        PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
-        
+        PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
+
         WindowSystem.RemoveAllWindows();
 
         MainWindow.Dispose();
+        ConfigWindow.Dispose();
         DresserScanner.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
@@ -66,8 +71,21 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnCommand(string command, string args)
     {
+        // "/dispeller config" is the same door as the installer's cog and the window's own
+        // title-bar button - people reach for whichever they already know.
+        var argument = args.Trim();
+
+        if (argument.Equals("config", StringComparison.OrdinalIgnoreCase)
+            || argument.Equals("settings", StringComparison.OrdinalIgnoreCase))
+        {
+            ToggleConfigUi();
+            return;
+        }
+
         MainWindow.Toggle();
     }
-    
+
     public void ToggleMainUi() => MainWindow.Toggle();
+
+    public void ToggleConfigUi() => ConfigWindow.Toggle();
 }
