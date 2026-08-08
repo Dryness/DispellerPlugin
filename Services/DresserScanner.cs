@@ -47,8 +47,9 @@ public class DresserScanner : IDisposable
                 _cachedDresserItems.Clear();
                 
                 // Only [0, UsedSlots) holds live items. The array is 8000 entries long and the
-                // game never zeroes an entry when an item is retrieved, so everything past
-                // UsedSlots is an abandoned leftover of a previously stored item.
+                // game leaves non-zero junk past the boundary - a 702-item dresser had 510 such
+                // entries. Verified by depositing an item: it landed at exactly index UsedSlots
+                // and pushed the junk up one, leaving the junk count unchanged.
                 var items = agent->Data->PrismBoxItems;
                 var itemCount = 0;
                 for (var i = 0; i < usedSlots && i < items.Length; i++)
