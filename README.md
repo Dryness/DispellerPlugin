@@ -3,13 +3,14 @@
 A Dalamud plugin for FINAL FANTASY XIV that helps you clean out your Glamour Dresser by
 identifying items that share the same visual model.
 
-The Glamour Dresser caps at 800 slots, and a lot of what fills it is redundant — different
-items that look identical once equipped. Dispeller scans the dresser, groups items by
-equipment slot and model ID, and shows you the groups where more than one item resolves to
-the same appearance. Keep one, dispel the rest.
+A lot of what fills your dresser may be redundant — different items that look identical once
+equipped. Dispeller scans the dresser, groups items by equipment slot and model, and shows
+you the groups where more than one item resolves to the same appearance. Keep one, dispel
+the rest, free up space for more.
 
-It also flags items that can live in the Armoire instead, which doesn't consume dresser
-space at all.
+Matching is on the *mesh*, so recolours and material variants count as redundant. HQ
+entries are matched against their normal-quality twins and marked with the HQ glyph. Items
+that can live in the Armoire instead are flagged. Outfit bundles are not yet supported for matching.
 
 ## Installing
 
@@ -22,11 +23,11 @@ https://raw.githubusercontent.com/Dryness/DispellerPlugin/master/repo.json
 
 ## Usage
 
-Open the Glamour Dresser at least once so the plugin can read it, then run `/dispeller`
-and press **Scan**.
+Open the Glamour Dresser, then run `/dispeller` and press **Scan**.
 
-The dresser contents are cached as you open it, so you can review results after closing
-the dresser. Re-scanning while it's open picks up any changes.
+Contents are cached as you open the dresser, so you can review results after closing it.
+Scan with it open when the numbers matter — the cache can't tell when the game has changed
+the data underneath it.
 
 ## Fork
 
@@ -40,6 +41,23 @@ on the current patch at time of commit (7.55).*
 
 *This is a strictly "**works on my machine**" fork, with no guarantees that it will work on
 yours.*
+
+---
+
+## Some worthwhile notes
+
+- The whole `PrismBoxItems` array is live. `UsedSlots` is not an item count — bounding the
+  scan by it drops real items, including every boot and accessory.
+- `Slot` is an outfit/set identifier, not a dresser position: an "Attire" bundle and all its
+  pieces share one. De-duplication keys on `ItemId`.
+- HQ entries are stored at `ItemId + 1,000,000`, and the `Item` sheet only carries the base
+  row. IDs are normalised for sheet lookups only, so an HQ item and its normal-quality twin
+  stay two dresser entries, as the game shows them.
+- Outfit bundles sit at `EquipSlotCategory` row 0 with every slot field zero. Real items,
+  not junk — the scan identifies and tallies them, but they aren't matched or shown in the
+  window, since a bundle has no model of its own.
+- Weapons now match on the mesh, as gear always has. Comparing every model field made a
+  weapon match nearly impossible.
 
 ---
 
@@ -64,37 +82,12 @@ human direction and review at each step. Specifically:
 - The human set the scope and made the decisions: what to investigate, when to stop
   investigating and write code, what to commit, what to defer.
 - The AI wrote the code changes, ran the builds, and analysed the diagnostic output.
-- **All empirical validation was performed by the human in-game.** The central bug in this
-  fork was settled by a live experiment — depositing and retrieving a dresser item and
-  observing how the game's backing array responded. The AI proposed the experiment and
-  interpreted the result; the human ran it and supplied the ground truth that corrected
-  two incorrect AI hypotheses along the way.
+- **All empirical validation was performed by the human in-game.** Conclusions were settled
+  by live experiments and by scanning with instrumented builds, checked against a dresser
+  the human had counted by hand. That ground truth overturned an earlier AI conclusion
+  outright and corrected several hypotheses along the way.
 - Each change was reviewed before being committed, and the reasoning behind it is recorded
   in the commit messages and in code comments rather than left implicit.
-
-### Why it was implemented this way
-
-The policy asks that "Why did you implement it this way?" never be answered with "I'm not
-sure, the AI did it." The substantive change in this fork is that both dresser scan loops
-are bounded by `UsedSlots` rather than iterating the full 8000-entry `PrismBoxItems` array.
-
-That bound is not a guess. Only `[0, UsedSlots)` holds live items; entries past the
-boundary are non-zero leftovers that the game does not clear. On the test character, a
-702-item dresser presented 1212 non-zero entries, so roughly 42% of what the plugin
-analysed was stale data. This was confirmed by depositing an item and observing that it
-was written at exactly index `UsedSlots`, shifting the leftover block up by one index and
-leaving the leftover count unchanged — which establishes the live set as exactly
-`[0, UsedSlots)`. Retrieving the item restored the array to its prior state.
-
-The related change — keying the de-duplication on `Slot` alone rather than
-`{Slot, ItemId}` — follows from the same investigation. A dresser slot holds exactly one
-item, so `Slot` is the identity; the composite key was what allowed stale entries to
-survive de-duplication.
-
-What produced the leftover block is still unknown. It is sorted by `ItemId` while the live
-region is not, which suggests a past sort or bulk operation, but ordinary deposit and
-retrieval does not grow it. The fix is correct regardless of the cause, since it never
-reads past the boundary.
 
 ### Scope note
 

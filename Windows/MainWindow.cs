@@ -254,9 +254,7 @@ public class MainWindow : Window, IDisposable
     {
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 20);
 
-        // Check if this item has matching models (more than one item with same model ID)
         var matchingModelCount = allItemsInSlot.Count(i => i.ModelId == item.ModelId);
-        var hasMatchingModels = matchingModelCount > 1;
 
         // Try to get icon. The dresser's own IconId can be one the game cannot resolve for
         // HQ entries, so fall back to the icon the Item sheet gives for the base item.
@@ -279,26 +277,18 @@ public class MainWindow : Window, IDisposable
         if (item.IsHq)
             displayName = $"{displayName} {(char)SeIconChar.HighQuality}";
 
-        // Add indicator for matching models
-        if (hasMatchingModels)
+        // No per-row "shared model" marker: the scan only keeps items that already share a
+        // model, so every row would carry one. The vertical bar down each run is what shows
+        // which rows group together.
+        ImGui.PushStyleColor(ImGuiCol.Text, BrightWhite);
+        ImGui.TextUnformatted(displayName);
+        ImGui.PopStyleColor();
+
+        if (ImGui.IsItemHovered())
         {
-            ImGui.PushStyleColor(ImGuiCol.Text, SoftMagenta);
-            ImGui.TextUnformatted($"🔗 {displayName}");
-            ImGui.PopStyleColor();
-            
-            // Tooltip showing matching items
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.BeginTooltip();
-                ImGui.TextUnformatted($"Matches {matchingModelCount} items with model: {item.ModelId}");
-                ImGui.EndTooltip();
-            }
-        }
-        else
-        {
-            ImGui.PushStyleColor(ImGuiCol.Text, BrightWhite);
-            ImGui.TextUnformatted(displayName);
-            ImGui.PopStyleColor();
+            ImGui.BeginTooltip();
+            ImGui.TextUnformatted($"Matches {matchingModelCount} items with model: {item.ModelId}");
+            ImGui.EndTooltip();
         }
 
         // Draw dye slot indicators (circles) - similar to Glamaholic
