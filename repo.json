@@ -23,6 +23,7 @@
     "AcceptsFeedback": true,
     "DownloadLinkInstall": "https://github.com/Dryness/DispellerPlugin/releases/latest/download/latest.zip",
     "DownloadLinkUpdate": "https://github.com/Dryness/DispellerPlugin/releases/latest/download/latest.zip",
-    "DownloadLinkTesting": "https://github.com/Dryness/DispellerPlugin/releases/latest/download/latest.zip"
+    "DownloadLinkTesting": "https://github.com/Dryness/DispellerPlugin/releases/latest/download/latest.zip",
+    "LastUpdate": "1786165869"
   }
 ]

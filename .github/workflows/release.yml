@@ -68,8 +68,11 @@ jobs:
       - name: Update repo.json on ${{ github.event.repository.default_branch }}
         run: |
           url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.zip"
-          jq --arg url "$url" \
-            '[. + {DownloadLinkInstall: $url, DownloadLinkUpdate: $url, DownloadLinkTesting: $url}]' \
+          # LastUpdate is what the installer shows as "last updated". The docs'
+          # example gives it as a unix timestamp in a string. Taken from the
+          # tagged commit so it is deterministic rather than run-dependent.
+          jq --arg url "$url" --arg ts "$(git log -1 --format=%ct)" \
+            '[. + {DownloadLinkInstall: $url, DownloadLinkUpdate: $url, DownloadLinkTesting: $url, LastUpdate: $ts}]' \
             "bin/Release/$INTERNAL_NAME.json" > "$RUNNER_TEMP/repo.json"
 
           branch="${{ github.event.repository.default_branch }}"
