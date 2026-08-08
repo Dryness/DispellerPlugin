@@ -133,9 +133,8 @@ public class MainWindow : Window, IDisposable
         var footerHeight = GetFooterHeight();
         DrawResults(footerHeight);
 
-        // Footer, pinned to the bottom edge of the window. Without this the
-        // footer is pushed past the bottom and — because the window is
-        // NoScrollbar — is only reachable with the mouse wheel.
+        // Pin the footer to the bottom edge of the window. Without this, the footer is pushed
+        // past the bottom, and because the window is NoScrollbar is only reachable with the mouse wheel.
         ImGui.SetCursorPosY(ImGui.GetWindowHeight() - ImGui.GetStyle().WindowPadding.Y - footerHeight);
         DrawFooter();
     }
@@ -165,7 +164,7 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Says so when the results were built from the copy saved on disk rather than from a
+    /// Indicates when the results were built from the copy saved on disk rather than from a
     /// live read. Evaluated every frame rather than at scan time, so it clears the moment the
     /// dresser is opened and the cache is confirmed.
     /// </summary>
@@ -384,8 +383,7 @@ public class MainWindow : Window, IDisposable
     ///
     /// Takes a uint, deliberately. The id used to be cast to ushort at the call site, which
     /// meant an out-of-range value wrapped into a valid but unrelated icon instead of
-    /// failing: a cane rendered as a pair of boots, and because the lookup succeeded the
-    /// fallback to the sheet's own icon never got a chance to run.
+    /// failing.
     /// </summary>
     private IDalamudTextureWrap? GetIcon(uint id)
     {
@@ -393,9 +391,8 @@ public class MainWindow : Window, IDisposable
             return null;
 
         // The dresser offsets an HQ entry's icon by 1,000,000, exactly as it offsets its item
-        // id - measured in game on 2026-08-08: icons 1038223/1032676/1048001 against sheet
-        // icons 38223/32676/48001. Asking for the HQ variant of the base icon gets the game's
-        // own HQ treatment rather than a near-miss.
+        // id. Asking for the HQ variant of the base icon gets the game's own HQ treatment 
+        // rather than a near-miss.
         var isHq = id >= 1_000_000;
         var iconId = isHq ? id - 1_000_000 : id;
 

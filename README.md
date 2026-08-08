@@ -3,7 +3,7 @@
 A Dalamud plugin for FINAL FANTASY XIV that helps you clean out your Glamour Dresser by
 identifying items that share the same visual model.
 
-A lot of what fills your dresser may be redundant — different items that look identical once
+A lot of what fills your dresser may be redundant - different items that look identical once
 equipped. Dispeller scans the dresser, groups items by equipment slot and model, and shows
 you the groups where more than one item resolves to the same appearance. Keep one, dispel
 the rest, free up space for more.
@@ -37,8 +37,7 @@ https://raw.githubusercontent.com/Dryness/DispellerPlugin/master/repo.json
 
 `/dispeller` to open the GUI. It will be empty until you open your Glamour Dresser once, at
 which point it will automatically populate. It keeps up on its own from there — switching
-between sections in the dresser, or depositing and retrieving items, updates the results as
-you go.
+between sections in the dresser, or depositing and retrieving items, updates as you go.
 
 Your dresser is saved per character, so the results are there the next time you log in
 without having to open it again. Anything shown from that saved copy is labelled with the
