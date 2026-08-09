@@ -33,6 +33,11 @@ internal static class UiStyle
     // and the highlight only has to say "this is the one the right-click will act on".
     internal static readonly Vector4 RowHover = new(0.78f, 0.37f, 0.64f, 0.22f);
 
+    // An item held in both the Glamour Dresser and the Armoire - the one row on screen that is
+    // pure waste, since the Armoire copy costs nothing and the dresser copy costs a slot. Warm
+    // gold rather than another shade of the plugin's pink, so it does not read as decoration.
+    internal static readonly Vector4 Attention = new(0.96f, 0.78f, 0.36f, 1.00f);
+
     internal const float HeaderHeight = 60f;
     private const float TitleFontScale = 1.6f;
 
@@ -76,4 +81,5 @@ internal static class UiStyle
         // then nudging it with spacings, was what left dead space inside and below the band.
         ImGui.SetCursorScreenPos(new Vector2(origin.X, origin.Y + HeaderHeight));
     }
+
 }

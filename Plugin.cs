@@ -24,6 +24,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public Configuration Configuration { get; init; }
     public DresserScanner DresserScanner { get; init; }
+    public ArmoireScanner ArmoireScanner { get; init; }
 
     public readonly WindowSystem WindowSystem = new("DispellerContinued");
     private MainWindow MainWindow { get; init; }
@@ -35,6 +36,10 @@ public sealed class Plugin : IDalamudPlugin
 
         // Built before the windows: MainWindow subscribes to its open/close events.
         DresserScanner = new DresserScanner();
+
+        // The Armoire has no addon of its own to follow, so nothing subscribes to this - the
+        // window watches its generation the same way it watches the dresser's.
+        ArmoireScanner = new ArmoireScanner();
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -65,6 +70,7 @@ public sealed class Plugin : IDalamudPlugin
         MainWindow.Dispose();
         ConfigWindow.Dispose();
         DresserScanner.Dispose();
+        ArmoireScanner.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
     }
