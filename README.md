@@ -4,14 +4,22 @@ A Dalamud plugin for FINAL FANTASY XIV that helps you clean out your Glamour Dre
 identifying items that share the same visual model.
 
 A lot of what fills your dresser may be redundant - different items that look identical once
-equipped. Dispeller scans the dresser, groups items by equipment slot and model, and shows
-you the groups where more than one item resolves to the same appearance. Keep one, dispel
-the rest, free up space for more.
+equipped. Dispeller scans the dresser and the Armoire, groups items by equipment slot and
+model, and shows you the groups where more than one item resolves to the same appearance.
+Keep one, dispel the rest, free up space for more.
+
+Each row carries the game's own Glamour Dresser and Armoire icons to show where the item is
+being kept. An item in both is flagged as a perfect duplicate - the dresser copy is a slot
+spent on nothing. An item that could move to the Armoire but hasn't is flagged too.
 
 Matching is on the *mesh* by default, so recolours and material variants count as redundant;
 a setting tightens it to require the variant to match too. HQ entries are matched against
-their normal-quality twins and marked with the HQ glyph. Items that can live in the Armoire
-instead are flagged. Outfit bundles are not yet supported for matching.
+their normal-quality twins and marked with the HQ glyph. Outfit bundles are not yet supported
+for matching.
+
+<p align="center">
+  <img src="images/dispeller.png" alt="The Dispeller Continued window, showing a Main Hand group with a perfect duplicate and an Armoire-eligible item" width="460">
+</p>
 
 This is a fork of [pupwife/DispellerPlugin](https://github.com/pupwife/DispellerPlugin),
 maintained for personal use only.
@@ -36,13 +44,14 @@ https://raw.githubusercontent.com/Dryness/DispellerPlugin/master/repo.json
 ## Usage
 
 `/dispeller` to open the GUI. It will be empty until you open your Glamour Dresser once, at
-which point it will automatically populate. It keeps up on its own from there — switching
-between sections in the dresser, or depositing and retrieving items, updates as you go.
+which point it will automatically populate with both the dresser and armoire.
+Opening just the armoire (to store or remove) will only populate with armoire data.
+Updates are real-time as items are added or removed to either.
 
-Your dresser is saved per character, so the results are there the next time you log in
-without having to open it again. Anything shown from that saved copy is labelled with the
-date it was taken, since the dresser may have changed since — open the dresser and the
-label clears.
+Both are saved per character, so the results are there the next time you log in without
+having to open either again. Anything shown from a saved copy is labelled with the date it
+was taken, since the contents may have changed since — open the dresser or the Armoire and
+its label clears.
 
 Right-click an item to hide it. A hidden item is left out of the duplicate check entirely,
 so whatever it matched disappears with it.
@@ -70,6 +79,9 @@ list hidden items again so they can be right-clicked back.
   window, since a bundle has no model of its own.
 - Weapons now match on the mesh, as gear always has. Comparing every model field made a
   weapon match nearly impossible.
+- `Cabinet.IsItemInCabinet` is keyed by `Cabinet` sheet row, not by item id, and roughly a
+  quarter of that sheet is placeholder rows with no item attached. The Armoire is polled and
+  fingerprinted like the dresser, since storing and withdrawing give no change signal either.
 
 ---
 
@@ -109,6 +121,13 @@ repository is not covered by it.
 
 Original plugin by **pupwife**. Built on [Dalamud](https://github.com/goatcorp/Dalamud)
 and [FFXIVClientStructs](https://github.com/aers/FFXIVClientStructs).
+
+Licensed under AGPL-3.0-or-later; see [LICENSE](LICENSE).
+
+```
+Copyright (C) 2025 pupwife
+Copyright (C) 2026 Dryness
+```
 
 FINAL FANTASY XIV © SQUARE ENIX CO., LTD. This project is not affiliated with or endorsed
 by Square Enix.

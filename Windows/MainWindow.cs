@@ -140,21 +140,10 @@ public class MainWindow : Window, IDisposable
         ImGui.Spacing();
 
         // Results display, sized to leave room for the footer
-        var footerHeight = GetFooterHeight();
-        DrawResults(footerHeight);
+        DrawResults(UiStyle.FooterHeight);
 
-        // Pin the footer to the bottom edge of the window. Without this, the footer is pushed
-        // past the bottom, and because the window is NoScrollbar is only reachable with the mouse wheel.
-        ImGui.SetCursorPosY(ImGui.GetWindowHeight() - ImGui.GetStyle().WindowPadding.Y - footerHeight);
-        DrawFooter();
+        UiStyle.DrawPinnedFooter("Find shared models in your glamour dresser!", UiStyle.BrightWhite);
     }
-
-    /// <summary>
-    /// Height of everything DrawFooter draws: the separator, its manual 10px
-    /// offset, and one line of text.
-    /// </summary>
-    private static float GetFooterHeight()
-        => 1 + ImGui.GetStyle().ItemSpacing.Y + 10 + ImGui.GetTextLineHeight();
 
     private void DrawHeader()
     {
@@ -761,20 +750,6 @@ public class MainWindow : Window, IDisposable
             Plugin.Log.Debug($"No icon {id}: {ex.Message}");
             return null;
         }
-    }
-
-    private void DrawFooter()
-    {
-        ImGui.Separator();
-        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 10);
-
-        var message = "Find shared models in your glamour dresser!";
-        var centerPos = (ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(message).X) / 2;
-        ImGui.SetCursorPosX(centerPos);
-
-        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.BrightWhite);
-        ImGui.TextUnformatted(message);
-        ImGui.PopStyleColor();
     }
 
     /// <summary>

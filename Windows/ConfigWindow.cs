@@ -47,10 +47,24 @@ public class ConfigWindow : Window, IDisposable
         //
         // ImRaii.Child ends the child unconditionally - ImGui requires EndChild() even when
         // BeginChild() returns false.
-        using var child = ImRaii.Child("SettingsBody", new Vector2(0, 0), false);
-        if (!child)
-            return;
+        //
+        // Scoped rather than left to the end of Draw(), because the footer has to be drawn
+        // outside the child to pin to the window rather than to the scrolling body. A negative
+        // height means "content region avail minus this much", keeping the body clear of it.
+        using (var child = ImRaii.Child(
+            "SettingsBody",
+            new Vector2(0, -(UiStyle.FooterHeight + ImGui.GetStyle().ItemSpacing.Y)),
+            false))
+        {
+            if (child)
+                DrawSettings();
+        }
 
+        UiStyle.DrawPinnedFooter("Dispeller originally by pupwife. Continued by Dryness.", UiStyle.MutedText);
+    }
+
+    private void DrawSettings()
+    {
         DrawSectionTitle("Window behaviour");
 
         DrawSetting(

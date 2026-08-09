@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 
@@ -82,4 +83,36 @@ internal static class UiStyle
         ImGui.SetCursorScreenPos(new Vector2(origin.X, origin.Y + HeaderHeight));
     }
 
+    /// <summary>
+    /// Everything <see cref="DrawPinnedFooter"/> occupies: the separator, its manual 10px
+    /// offset, and one line of text. A window has to leave this much room for its body.
+    /// </summary>
+    internal static float FooterHeight
+        => 1 + ImGui.GetStyle().ItemSpacing.Y + 10 + ImGui.GetTextLineHeight();
+
+    /// <summary>
+    /// One centred line pinned to the bottom edge of the window, above a separator. Both
+    /// windows are NoScrollbar so the gradient band stays flush with their edges, which leaves
+    /// a footer nowhere to go if the body overflows - without the pin it is pushed past the
+    /// bottom and, with no scrollbar, only reachable with the mouse wheel.
+    ///
+    /// The caller is responsible for having sized its body to leave <see cref="FooterHeight"/>
+    /// free; this only positions itself.
+    /// </summary>
+    internal static void DrawPinnedFooter(string message, Vector4 color)
+    {
+        ImGui.SetCursorPosY(ImGui.GetWindowHeight() - ImGui.GetStyle().WindowPadding.Y - FooterHeight);
+
+        ImGui.Separator();
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 10);
+
+        // Clamped at zero: a message wider than the window would otherwise be centred to a
+        // negative offset, pushing its start off the left edge rather than merely clipping.
+        var centre = Math.Max(0, (ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(message).X) / 2);
+        ImGui.SetCursorPosX(centre);
+
+        ImGui.PushStyleColor(ImGuiCol.Text, color);
+        ImGui.TextUnformatted(message);
+        ImGui.PopStyleColor();
+    }
 }
