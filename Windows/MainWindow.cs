@@ -18,6 +18,12 @@ namespace Dispeller.Windows;
 
 public class MainWindow : Window, IDisposable
 {
+    /// <summary>
+    /// The slot category outfit bundles are filed under. Not an equipment slot - the game gives
+    /// a bundle EquipSlotCategory 0 - so it is matched and counted on its own terms throughout.
+    /// </summary>
+    private const string OutfitCategory = "Outfit";
+
     private readonly Plugin plugin;
     private List<SharedModelGroup>? sharedGroups;
     private string statusMessage = "Open your Glamour Dresser to get started!";
@@ -241,7 +247,12 @@ public class MainWindow : Window, IDisposable
         var items = group.Items.Count;
         var models = group.ModelCount;
 
-        return $"{items} item{(items == 1 ? "" : "s")} | {models} model{(models == 1 ? "" : "s")} | {group.HiddenCount} hidden";
+        // The Outfit section counts outfits, not models. Its rows are bundles, which have no
+        // model of their own and are matched on the outfit's name - calling that a model would
+        // describe the one section where the word does not apply.
+        var unit = group.SlotCategory == OutfitCategory ? "outfit" : "model";
+
+        return $"{items} item{(items == 1 ? "" : "s")} | {models} {unit}{(models == 1 ? "" : "s")} | {group.HiddenCount} hidden";
     }
 
     private void DrawSharedGroup(SharedModelGroup group)
@@ -465,8 +476,12 @@ public class MainWindow : Window, IDisposable
         // of the three that used to hang off the individual pieces.
         ImGui.PushStyleColor(ImGuiCol.HeaderHovered, UiStyle.RowHover);
         ImGui.PushStyleColor(ImGuiCol.HeaderActive, UiStyle.RowHover);
+        // Keyed on the dresser Slot as well as the item id, because the same item id can now be
+        // on screen twice - an item stored in two dresser groupings is two rows, and so is an
+        // outfit held under two. Two widgets sharing an ImGui id share their hover and their
+        // popup with each other, so right-clicking one would highlight both.
         ImGui.Selectable(
-            $"##row{item.ItemId}",
+            $"##row{item.ItemId}_{item.Slot}",
             false,
             ImGuiSelectableFlags.None,
             new Vector2(ImGui.GetContentRegionAvail().X, RowHeight));
@@ -551,10 +566,11 @@ public class MainWindow : Window, IDisposable
             ImGui.Dummy(new Vector2(circlesWidth, circleRadius * 2 + 4));
         }
 
-        // The Armoire tag. Where the item is now is already said by the glyphs on the left, so
-        // this line is only ever about what to do next - and what to do next changes completely
-        // once a copy is confirmed to be in the Armoire already.
-        if (item.InDresser && item.InArmoire)
+        // Where the item is now is already said by the glyphs on the left, so this line is only
+        // ever about what to do next - and what to do next changes completely once a second copy
+        // is confirmed, whether that copy is in the Armoire or in the dresser itself. The two
+        // read the same on the row and are told apart in the tooltip.
+        if (item.IsPerfectDuplicate)
         {
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 5);
@@ -570,6 +586,23 @@ public class MainWindow : Window, IDisposable
 
             ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.SoftMagenta);
             ImGui.TextUnformatted("[Armoire Eligible]");
+            ImGui.PopStyleColor();
+        }
+
+        // Independent of the two Armoire tags above, and free to sit alongside one: where an
+        // item is kept and what it is a piece of are different facts about it. This is the one
+        // tag that says something about the item rather than about what to do with it - losing
+        // a piece breaks up a set, and the row otherwise gives no sign it belongs to one.
+        //
+        // Checked at draw time, not at build time: the tag is the only thing the setting
+        // governs, so turning it off has nothing to rebuild and the tooltip keeps saying it.
+        if (item.Outfits.Count > 0 && plugin.Configuration.TagOutfitComponents)
+        {
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 5);
+
+            ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.OutfitTag);
+            ImGui.TextUnformatted("[Outfit]");
             ImGui.PopStyleColor();
         }
 
@@ -652,13 +685,40 @@ public class MainWindow : Window, IDisposable
 
         ImGui.BeginTooltip();
 
-        // A run of one is an item redundant against its own Armoire copy, not against a
-        // neighbour - "1 items match model" would be both ungrammatical and beside the point.
-        ImGui.TextUnformatted(matchingModelCount > 1
-            ? $"{matchingModelCount} items match model: {item.ModelId}"
-            : $"Model: {item.ModelId}");
+        // An outfit row is not here for its model - a bundle has none - but because the dresser
+        // is holding the same outfit under more than one grouping, which is what its run counts.
+        if (item.IsOutfit)
+        {
+            ImGui.TextUnformatted($"Outfit: {item.ModelId}");
+            ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.Attention);
+            ImGui.TextUnformatted(matchingModelCount > 1
+                ? $"Your dresser is holding this outfit under {matchingModelCount} separate groupings"
+                : "Held under one grouping");
+            ImGui.PopStyleColor();
+        }
+        else
+        {
+            // A run of one is an item redundant against its own Armoire copy, not against a
+            // neighbour - "1 items match model" would be both ungrammatical and beside the point.
+            ImGui.TextUnformatted(matchingModelCount > 1
+                ? $"{matchingModelCount} items match model: {item.ModelId}"
+                : $"Model: {item.ModelId}");
+        }
 
         ImGui.TextUnformatted(DescribeLocation(item));
+
+        if (item.DresserCopies > 1)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.Attention);
+            ImGui.TextUnformatted(
+                $"Your dresser is holding {item.DresserCopies} copies of this item, one slot each.");
+            ImGui.PopStyleColor();
+        }
+
+        // Named rather than merely flagged: which set this copy hangs off is the whole reason the
+        // tag is worth having.
+        if (item.Outfits.Count > 0)
+            ImGui.TextUnformatted($"Part of {string.Join(", ", item.Outfits)}");
 
         if (item.DyeCount > 0)
             ImGui.TextUnformatted($"{item.DyeCount} dye slot{(item.DyeCount > 1 ? "s" : "")} available");
@@ -692,7 +752,7 @@ public class MainWindow : Window, IDisposable
     {
         // Raw ImGui rather than ImRaii: EndPopup must be called only when Begin returned
         // true, which is the opposite of the child/table rule ImRaii exists to handle.
-        if (!ImGui.BeginPopupContextItem($"##rowctx{item.ItemId}"))
+        if (!ImGui.BeginPopupContextItem($"##rowctx{item.ItemId}_{item.Slot}"))
             return;
 
         ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.LightMagenta);
@@ -784,15 +844,33 @@ public class MainWindow : Window, IDisposable
                 return;
             }
 
-            // Outfit bundles ("... Attire") have no equipment slot of their own, so they can't
-            // be model-matched against garments. Counted here, grouping deferred.
-            var outfitCount = uniqueItems.Count(item => GetSlotName(item.ItemId) == "Outfit");
+            // Outfit bundles ("... Attire") have no equipment slot of their own, so they can't be
+            // model-matched against garments. They get their own section, matched on the outfit's
+            // name, and are taken from the raw dresser list rather than from uniqueItems: a
+            // grouping is a dresser-only idea, and this keeps the Armoire - which has no Slot to
+            // speak of and gets 0 - out of a question it cannot answer.
+            //
+            // Deduplicated on (ItemId, Slot) rather than taken as they come. Slot is the id of
+            // the dresser's own grouping, so one outfit at one Slot is one grouping however many
+            // times the array happens to list it - and removing a piece from an outfit leaves
+            // the game repeating that outfit's entry, three times over in the case measured.
+            // Counting rows instead would report those repeats as duplicated outfits, which is
+            // the one thing this section is meant to be able to tell you. Two genuine groupings
+            // are two Slots, which survives this untouched.
+            var outfitEntries = dresserItems
+                .Where(item => GetSlotName(item.ItemId) == OutfitCategory)
+                .DistinctBy(item => (item.ItemId, item.Slot))
+                .ToList();
+
+            // Which dresser grouping each copy is linked to, so a piece can be told from an
+            // unattached second copy of the same item sitting in a grouping of its own.
+            var outfitsBySlot = BuildOutfitsBySlot(outfitEntries);
 
             // Filter out items with unknown slots
             var validItems = uniqueItems
                 .Where(item => {
                     var slotName = GetSlotName(item.ItemId);
-                    return !string.IsNullOrEmpty(slotName) && slotName != "Unknown Slot" && slotName != "Outfit";
+                    return !string.IsNullOrEmpty(slotName) && slotName != "Unknown Slot" && slotName != OutfitCategory;
                 })
                 .ToList();
 
@@ -823,7 +901,7 @@ public class MainWindow : Window, IDisposable
             Plugin.Log.Information(
                 $"Scan: {dresserItems.Count} raw dresser, {armoireItemIds.Count} armoire, {uniqueItems.Count} unique, "
                 + $"{uniqueItems.Count(i => i.InDresser && i.InArmoire)} in both, {validItems.Count} equippable, "
-                + $"{outfitCount} outfits, {hiddenCount} hidden");
+                + $"{outfitEntries.Count} outfits, {hiddenCount} hidden");
             foreach (var g in uniqueItems.GroupBy(i => GetSlotName(i.ItemId)).OrderBy(g => GetSlotOrder(g.Key)))
                 Plugin.Log.Debug($"Scan category {g.Key}: {g.Count()}");
 
@@ -886,7 +964,9 @@ public class MainWindow : Window, IDisposable
                                 IsHq = item.ItemId >= 1_000_000,
                                 // Only ever true while ShowHiddenItems is on - otherwise a
                                 // hidden item never reaches this far.
-                                IsHidden = plugin.Configuration.IsHidden(item.ItemId)
+                                IsHidden = plugin.Configuration.IsHidden(item.ItemId),
+                                DresserCopies = item.DresserCopies,
+                                Outfits = OutfitsFor(item, outfitsBySlot)
                             };
                         })
                         .ToList();
@@ -914,8 +994,13 @@ public class MainWindow : Window, IDisposable
                     HiddenCount = entry.Value
                 });
 
+            // The Outfit section is built separately, off the raw entries, so it is concatenated
+            // rather than falling out of the slot grouping above. GetSlotOrder puts it last.
+            var outfitGroup = BuildOutfitGroup(outfitEntries, armoireItemIds);
+
             grouped = grouped
                 .Concat(emptied)
+                .Concat(outfitGroup == null ? [] : new[] { outfitGroup })
                 .OrderBy(g => GetSlotOrder(g.SlotCategory))
                 .ToList();
 
@@ -929,18 +1014,24 @@ public class MainWindow : Window, IDisposable
             statusMessage = $"Found {totalItems} redundant items across {categoryCount} slot categories!";
 
             // Called out separately from the total because it is the one number that is
-            // actionable without any comparing: a copy in the dresser and a copy in the Armoire
-            // is a dresser slot spent on nothing.
-            var perfectDuplicates = grouped.Sum(g => g.Items.Count(i => i.InDresser && i.InArmoire));
+            // actionable without any comparing: a second copy, in the Armoire or in the dresser
+            // itself, is a dresser slot spent on nothing.
+            //
+            // Counted off the same property the tag is drawn from, so the headline and the rows
+            // can never disagree about what a perfect duplicate is.
+            var perfectDuplicates = grouped.Sum(g => g.Items.Count(i => i.IsPerfectDuplicate));
             if (perfectDuplicates > 0)
-                statusMessage += $" {perfectDuplicates} already in your Armoire.";
+                statusMessage += $" {perfectDuplicates} perfect duplicate{(perfectDuplicates == 1 ? "" : "s")}.";
 
             // Hidden items are silent by design, which is exactly why the count has to be
             // stated somewhere - otherwise a result that shrank months ago has no explanation
             // on screen at all. Whether any of them are currently revealed is a per-section
             // question, and the section headers answer it.
-            if (hiddenCount > 0)
-                statusMessage += $" ({hiddenCount} hidden)";
+            // Outfits are hidden through the same menu and have to be in the same total, or
+            // hiding one would take rows off the screen without changing any number on it.
+            var totalHidden = hiddenCount + (outfitGroup?.HiddenCount ?? 0);
+            if (totalHidden > 0)
+                statusMessage += $" ({totalHidden} hidden)";
 
             // Kept because this runs on the draw path and that is a known compromise. Measured
             // at 2ms for 1636 items once warm; the first build of a session costs about 25ms
@@ -956,58 +1047,196 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// One candidate for matching, and which of the two stores it came out of.
+    /// The outfit grouping sitting at each dresser Slot, for the <c>[Outfit]</c> tag.
+    ///
+    /// An outfit is not a container: its pieces stay in their own equipment slots and are merely
+    /// linked to it, so this adds no items to the pool. It answers a different question - whether
+    /// the row in front of you is linked to a set you have - which nothing else on the row says.
+    ///
+    /// Keyed on Slot, not on item id, and that is the whole point. Being linked to an outfit is a
+    /// property of the <i>copy</i>, not of the item: The Emperor's New Hat is linked to its attire
+    /// at Slot 27 while a second copy stands alone at Slot 706, and an id-keyed answer tagged both.
+    /// It also settles the pieces belonging to two sets - 471 of them - which an id-keyed answer
+    /// had to name both owners of; the Slot says which grouping this copy actually hangs off.
     /// </summary>
-    private sealed record ItemEntry(uint ItemId, uint IconId, uint Slot, bool InDresser, bool InArmoire);
+    private Dictionary<uint, (uint SetId, string Name)> BuildOutfitsBySlot(List<PrismBoxItem> outfitEntries)
+    {
+        var bySlot = new Dictionary<uint, (uint SetId, string Name)>();
+
+        foreach (var entry in outfitEntries)
+        {
+            var setId = BaseItemId(entry.ItemId);
+
+            // TryAdd rather than an assignment: no Slot has ever been seen holding two bundles,
+            // and if one ever did, the first is as good an answer as the second and neither is
+            // worth throwing over.
+            bySlot.TryAdd(entry.Slot, (setId, GetItemNameFromLumina(setId)));
+        }
+
+        return bySlot;
+    }
 
     /// <summary>
-    /// Folds the Glamour Dresser and the Armoire into one pool, one entry per item id.
+    /// The outfit this particular copy is linked to, or empty. A list because the tooltip prints
+    /// it as one, though a copy hangs off exactly one grouping.
+    /// </summary>
+    private static List<string> OutfitsFor(ItemEntry item, Dictionary<uint, (uint SetId, string Name)> outfitsBySlot)
+    {
+        // An Armoire-only entry has no dresser Slot and carries 0, which is a real Slot in the
+        // dresser - nothing links the two, so it must not be looked up as though it did.
+        if (!item.InDresser)
+            return [];
+
+        if (!outfitsBySlot.TryGetValue(item.Slot, out var outfit))
+            return [];
+
+        // The bundle row is the grouping, not a piece of it.
+        var itemId = BaseItemId(item.ItemId);
+        if (itemId == outfit.SetId)
+            return [];
+
+        return OutfitService.GetComponents(outfit.SetId).Contains(itemId) ? [outfit.Name] : [];
+    }
+
+    /// <summary>
+    /// The Outfit section: outfits the dresser is holding under more than one grouping.
+    ///
+    /// Matched on the outfit's name, not on what is linked to it. Depositing a piece that could
+    /// join an outfit you already have lets you start a fresh grouping instead, and taking that
+    /// offer spends a second set of dresser slots on the same outfit - two groupings under one
+    /// name is precisely the waste, whatever each of them currently holds.
+    ///
+    /// Fed the raw dresser entries rather than the merged pool: a grouping only exists in the
+    /// dresser, and an Armoire row carries no Slot to be grouped by.
+    /// </summary>
+    private SharedModelGroup? BuildOutfitGroup(List<PrismBoxItem> outfitEntries, HashSet<uint> storedInArmoire)
+    {
+        // Same rule as every other section: hidden entries come out before the count test, so
+        // hiding one half of a duplicated pair takes the other half with it rather than leaving
+        // a run of one claiming to be a duplicate.
+        var revealed = plugin.Configuration.ShowsHiddenIn(OutfitCategory);
+        var hiddenCount = outfitEntries.Count(entry => plugin.Configuration.IsHidden(entry.ItemId));
+
+        var items = outfitEntries
+            .Where(entry => !plugin.Configuration.IsHidden(entry.ItemId) || revealed)
+            .GroupBy(entry => GetItemNameFromLumina(entry.ItemId))
+            .Where(g => g.Count() > 1)
+            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+            .SelectMany(g => g.Select(entry => new SharedModelItem
+            {
+                Name = g.Key,
+                ItemId = entry.ItemId,
+                IconId = (int)entry.IconId,
+                Slot = entry.Slot,
+                // No model to carry, so the name goes here instead. It is what DrawModelRuns
+                // brackets a run on and what the header counts as distinct.
+                ModelId = g.Key,
+                DyeCount = 0,
+                CanGoInArmoire = CanGoInArmoire(entry.ItemId),
+                InDresser = true,
+                InArmoire = storedInArmoire.Contains(entry.ItemId),
+                IsHq = entry.ItemId >= 1_000_000,
+                IsHidden = plugin.Configuration.IsHidden(entry.ItemId),
+                IsOutfit = true,
+            }))
+            .ToList();
+
+        // No section at all unless there is something to say. A slot that has hidden its only
+        // match still gets a header, greyed, so the reveal has something to right-click - the
+        // same reason DrawSharedGroup keeps emptied sections.
+        if (items.Count == 0 && hiddenCount == 0)
+            return null;
+
+        return new SharedModelGroup
+        {
+            SlotCategory = OutfitCategory,
+            Items = items,
+            ModelCount = items.Select(i => i.ModelId).Distinct().Count(),
+            HiddenCount = hiddenCount,
+        };
+    }
+
+    /// <summary>
+    /// One candidate for matching, and which of the two stores it came out of.
+    /// </summary>
+    private sealed record ItemEntry(
+        uint ItemId,
+        uint IconId,
+        uint Slot,
+        bool InDresser,
+        bool InArmoire,
+        int DresserCopies);
+
+    /// <summary>
+    /// Folds the Glamour Dresser and the Armoire into one pool, one entry per dresser copy.
     ///
     /// The stores are merged rather than matched separately because a redundant glamour is
     /// redundant wherever the two copies happen to sit - an Armoire piece and a dresser piece
     /// that share a mesh are exactly the case worth knowing about, and it was invisible while
     /// only the dresser was read.
     ///
-    /// An item held in both places is one entry with both flags set, not two rows. It is one
-    /// item as far as the player is concerned, and splitting it would double-count it in the
-    /// header counts and pad every run it appears in.
+    /// An item held in both <i>stores</i> is one entry with both flags set, not two rows. It is
+    /// one item as far as the player is concerned, and splitting it would double-count it in the
+    /// header counts and pad every run it appears in. An item held twice in the <i>dresser</i> is
+    /// the opposite case and stays two rows: there really are two of them, costing a slot each.
     /// </summary>
     private static List<ItemEntry> MergeStores(List<PrismBoxItem> dresserItems, HashSet<uint> armoireItemIds)
     {
-        var merged = new Dictionary<uint, ItemEntry>();
+        // Keyed on the item AND the dresser grouping it sits in, so one item stored twice stays
+        // two entries. Keying on ItemId alone silently swallowed the strongest finding the
+        // plugin can make: The Emperor's New Hat linked to its outfit at Slot 27 and a second
+        // copy standing alone at Slot 706 is two dresser slots spent on one appearance, and it
+        // collapsed to a single row that then matched nothing.
+        //
+        // Slot is the id of the dresser's grouping, not a storage position - a bundle and its
+        // pieces all share one - so this is not "one entry per position". It is the narrowest
+        // key that keeps two copies apart: the game lists a piece once even when it belongs to
+        // two outfits the player owns, so a second row under a second Slot is a second copy.
+        // Repeats of one (ItemId, Slot) are not: removing a piece from an outfit leaves the
+        // array repeating that outfit's own entry, so those collapse here as before.
+        var dresserEntries = new Dictionary<(uint ItemId, uint Slot), ItemEntry>();
 
-        // Keyed on ItemId. Do NOT key on Slot: Slot identifies an outfit set, not a dresser
-        // position - an "Attire" bundle and all nine of its pieces share one Slot, so grouping
-        // by it collapses whole outfits down to a single garment.
         foreach (var item in dresserItems)
         {
-            if (merged.ContainsKey(item.ItemId))
+            var key = (item.ItemId, item.Slot);
+            if (dresserEntries.ContainsKey(key))
                 continue;
 
             // The dresser holds HQ entries at ItemId + 1,000,000 while the Armoire only ever
             // holds base ids, so this membership test is on the raw id deliberately: an HQ
             // dresser entry never claims the NQ Armoire copy as its own, which is right - they
             // are two different things and the game shows them as two.
-            merged[item.ItemId] = new ItemEntry(
+            dresserEntries[key] = new ItemEntry(
                 item.ItemId,
                 item.IconId,
                 item.Slot,
                 InDresser: true,
-                InArmoire: armoireItemIds.Contains(item.ItemId));
+                InArmoire: armoireItemIds.Contains(item.ItemId),
+                DresserCopies: 1);
         }
+
+        // Every copy carries the total, not its own ordinal, so any one of the rows can say the
+        // item is stored more than once without the others having to be consulted.
+        var copies = dresserEntries.Keys
+            .GroupBy(key => key.ItemId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var merged = dresserEntries.Values
+            .Select(entry => entry with { DresserCopies = copies[entry.ItemId] })
+            .ToList();
 
         foreach (var itemId in armoireItemIds)
         {
-            if (merged.ContainsKey(itemId))
+            if (copies.ContainsKey(itemId))
                 continue;
 
             // Nothing but the id comes out of the Armoire - no icon, no stains, no slot. The
             // icon is filled in from the Item sheet downstream, exactly as it already is for a
             // dresser entry whose own IconId is unusable.
-            merged[itemId] = new ItemEntry(itemId, 0, 0, InDresser: false, InArmoire: true);
+            merged.Add(new ItemEntry(itemId, 0, 0, InDresser: false, InArmoire: true, DresserCopies: 0));
         }
 
-        return [.. merged.Values];
+        return merged;
     }
 
     // Both of these are asked the same question about the same item several times over during
@@ -1168,6 +1397,13 @@ public class MainWindow : Window, IDisposable
 
     private Vector4 GetColorForSlot(string slotName)
     {
+        // Outfits are a grouping the dresser lays over the equipment slots rather than another
+        // slot, so they get a colour outside the three the slots share.
+        if (slotName == OutfitCategory)
+        {
+            return UiStyle.OutfitAccent;
+        }
+
         // Accessories - purple
         if (slotName == "Ears" || slotName == "Neck" || slotName == "Wrists" || slotName == "Ring")
         {
@@ -1228,4 +1464,38 @@ public class SharedModelItem
 
     public bool IsHq { get; set; }
     public bool IsHidden { get; set; }
+
+    /// <summary>
+    /// This row is an outfit bundle in the Outfit section, rather than a garment. Changes what
+    /// its <see cref="ModelId"/> means - an outfit has no model of its own, so the field carries
+    /// the outfit's name and the run brackets entries of the same outfit.
+    /// </summary>
+    public bool IsOutfit { get; set; }
+
+    /// <summary>
+    /// How many times the Glamour Dresser is holding this exact item. Normally 1; more than that
+    /// is the same item stored twice over, each copy costing its own dresser slot. 0 for a row
+    /// that came out of the Armoire alone.
+    /// </summary>
+    public int DresserCopies { get; set; }
+
+    /// <summary>
+    /// A dresser slot spent on something already held - the strongest finding here, and true
+    /// without comparing the item to anything else.
+    ///
+    /// Two ways to be one, deliberately under a single name: a copy in the Armoire, which stores
+    /// it for free, or a second copy in the dresser itself. What the player does about it is the
+    /// same in both cases, and telling them apart is what the row's tooltip is for.
+    /// </summary>
+    public bool IsPerfectDuplicate => (InDresser && InArmoire) || DresserCopies > 1;
+
+    /// <summary>
+    /// The outfit grouping this particular copy is linked to, by name. Empty for most rows, and
+    /// always empty on an outfit row - a bundle is not a piece of itself. What the
+    /// <c>[Outfit]</c> tag is drawn from.
+    ///
+    /// Per copy, not per item: a second copy of a piece, stored on its own, is linked to nothing
+    /// even while the first is part of a set.
+    /// </summary>
+    public List<string> Outfits { get; set; } = [];
 }

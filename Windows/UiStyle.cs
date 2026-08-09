@@ -34,6 +34,15 @@ internal static class UiStyle
     // and the highlight only has to say "this is the one the right-click will act on".
     internal static readonly Vector4 RowHover = new(0.78f, 0.37f, 0.64f, 0.22f);
 
+    // The Outfit section. A cool blue, clear of the magenta/purple/mint the equipment slots use,
+    // because an outfit is not another slot - it is a grouping the dresser makes over the others.
+    internal static readonly Vector4 OutfitAccent = new(0.56f, 0.68f, 0.92f, 1.00f);
+
+    // The [Outfit] row tag. Deliberately dimmer than the section colour: over half the rows in a
+    // full result carry it, and a bright tag on most of the list is decoration rather than a
+    // signal. It has to be legible when skimmed for, not when skimmed past.
+    internal static readonly Vector4 OutfitTag = new(0.50f, 0.58f, 0.74f, 1.00f);
+
     // An item held in both the Glamour Dresser and the Armoire - the one row on screen that is
     // pure waste, since the Armoire copy costs nothing and the dresser copy costs a slot. Warm
     // gold rather than another shade of the plugin's pink, so it does not read as decoration.

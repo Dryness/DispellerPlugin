@@ -9,13 +9,18 @@ model, and shows you the groups where more than one item resolves to the same ap
 Keep one, dispel the rest, free up space for more.
 
 Each row carries the game's own Glamour Dresser and Armoire icons to show where the item is
-being kept. An item in both is flagged as a perfect duplicate - the dresser copy is a slot
-spent on nothing. An item that could move to the Armoire but hasn't is flagged too.
+being kept. An item is flagged as a perfect duplicate when a second copy exists - in the
+Armoire, which stores it for free, or in the dresser itself. An item that could move to the
+Armoire but hasn't is flagged too.
 
 Matching is on the *mesh* by default, so recolours and material variants count as redundant;
 a setting tightens it to require the variant to match too. HQ entries are matched against
-their normal-quality twins and marked with the HQ glyph. Outfit bundles are not yet supported
-for matching.
+their normal-quality twins and marked with the HQ glyph.
+
+Items linked to an outfit are tagged `[Outfit]`, so it's clear that discarding one breaks up
+a set - the tag can be switched off in the settings. An outfit held under more than one
+dresser grouping gets its own section, since the second grouping spends dresser slots on an
+outfit you already have.
 
 <p align="center">
   <img src="images/dispeller.png" alt="The Dispeller Continued window, showing a Main Hand group with a perfect duplicate and an Armoire-eligible item" width="460">
@@ -70,13 +75,14 @@ list hidden items again so they can be right-clicked back.
   contents either, so it can't be watched for changes. The dresser is polled and fingerprinted
   instead.
 - `Slot` is an outfit/set identifier, not a dresser position: an "Attire" bundle and all its
-  pieces share one. De-duplication keys on `ItemId`.
+  pieces share one. De-duplication keys on `ItemId` *and* `Slot`, so the same item stored in
+  two groupings stays two entries — keying on `ItemId` alone hid real second copies.
+- Outfit bundles sit at `EquipSlotCategory` row 0. They aren't containers: pieces stay in
+  their own slots and are merely linked, so `MirageStoreSetItem` is what says which piece
+  belongs to which outfit.
 - HQ entries are stored at `ItemId + 1,000,000`, and the `Item` sheet only carries the base
   row. IDs are normalised for sheet lookups only, so an HQ item and its normal-quality twin
   stay two dresser entries, as the game shows them.
-- Outfit bundles sit at `EquipSlotCategory` row 0 with every slot field zero. Real items,
-  not junk — the scan identifies and tallies them, but they aren't matched or shown in the
-  window, since a bundle has no model of its own.
 - Weapons now match on the mesh, as gear always has. Comparing every model field made a
   weapon match nearly impossible.
 - `Cabinet.IsItemInCabinet` is keyed by `Cabinet` sheet row, not by item id, and roughly a

@@ -109,6 +109,18 @@ public class ConfigWindow : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
+        DrawSectionTitle("Outfits");
+
+        DrawSetting(
+            "Tag items that belong to an outfit",
+            "Show or hide the [Outfit] tag on items.",
+            configuration.TagOutfitComponents,
+            value => configuration.TagOutfitComponents = value);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
         DrawSectionTitle("Hidden items");
 
         DrawHiddenItems();

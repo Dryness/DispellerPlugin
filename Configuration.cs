@@ -40,6 +40,18 @@ public class Configuration : IPluginConfiguration
     public bool CountRecoloursAsDuplicates { get; set; } = true;
 
     /// <summary>
+    /// Tag rows whose item is a piece of an outfit held in the dresser. Defaults on: knowing a
+    /// garment is part of a set changes what discarding it costs, and nothing else on the row
+    /// says so.
+    ///
+    /// A toggle rather than a fixture because it is a busy tag by nature - about half the items
+    /// in a full dresser are part of some outfit - and whether that reads as useful or as noise
+    /// is a matter of taste. Switching it off leaves the tooltip's "Part of ..." line, so the
+    /// answer is still one hover away.
+    /// </summary>
+    public bool TagOutfitComponents { get; set; } = true;
+
+    /// <summary>
     /// Show hidden items anyway, tagged as hidden, so they can be right-clicked back into the
     /// results. This does not merely append them: it switches hiding off wholesale, including
     /// for the shared-model test, so what you see is exactly the unfiltered picture.
