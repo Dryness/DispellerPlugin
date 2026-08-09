@@ -14,6 +14,12 @@ env:
   # assembly, the manifest and the output folder after it.
   INTERNAL_NAME: DispellerContinued
 
+  # The API level this plugin targets. Stated here rather than read from the
+  # source manifest because DalamudPackager injects DalamudApiLevel at build
+  # time - it is in the built manifest, which is too late to check what to
+  # build against. Both guards below compare against this.
+  DALAMUD_API_LEVEL: '15'
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -27,12 +33,29 @@ jobs:
           dotnet-version: '10.0.x'
 
       # Dalamud is not on the runner. Dalamud.NET.Sdk only auto-resolves an
-      # XIVLauncher install, so point DALAMUD_HOME at the published distrib
-      # instead. The api15 path must track DalamudApiLevel in the manifest.
+      # XIVLauncher install, so point DALAMUD_HOME at the published distrib.
+      #
+      # The stable channel, NOT the api15/ path. That path is frozen on a
+      # pre-release 14.0.5.2 build whose FFXIVClientStructs is a different
+      # vintage from the one players run, so code that builds against a current
+      # install failed here on a changed method signature. Stable is 15.0.3.1,
+      # which is what XIVLauncher installs.
       - name: Fetch Dalamud
         run: |
-          curl -fsSL -o dalamud.zip https://goatcorp.github.io/dalamud-distrib/api15/latest.zip
+          curl -fsSL -o dalamud.zip https://goatcorp.github.io/dalamud-distrib/latest.zip
           unzip -q dalamud.zip -d "$RUNNER_TEMP/dalamud"
+
+          # Assert the fetched build matches the API level the manifest targets.
+          # Without this the mismatch above surfaced as an unrelated-looking
+          # compile error rather than as "you built against the wrong Dalamud",
+          # and a future channel move would do the same again.
+          got=$(jq -r '.libraries | keys | map(select(startswith("Dalamud/"))) | .[0]' \
+            "$RUNNER_TEMP/dalamud/Dalamud.deps.json" | cut -d/ -f2)
+          echo "Fetched Dalamud $got; this plugin targets API level $DALAMUD_API_LEVEL."
+          if [ "${got%%.*}" != "$DALAMUD_API_LEVEL" ]; then
+            echo "That is the wrong API level. Update DALAMUD_API_LEVEL, or the distrib channel above."
+            exit 1
+          fi
 
       - name: Build
         run: DALAMUD_HOME="$RUNNER_TEMP/dalamud" dotnet build -c Release
@@ -52,6 +75,15 @@ jobs:
           if [ "$(pad "$tag")" != "$(pad "$built")" ]; then
             echo "Tag $GITHUB_REF_NAME does not match built version $built."
             echo "Bump <Version> in Dispeller.csproj, or retag."
+            exit 1
+          fi
+
+          # Closes the loop on the fetch check: that one verified what we built
+          # against, this one verifies what the packager then claimed to target.
+          # A disagreement means the SDK moved without the workflow noticing.
+          level=$(jq -r .DalamudApiLevel "bin/Release/$INTERNAL_NAME.json")
+          if [ "$level" != "$DALAMUD_API_LEVEL" ]; then
+            echo "Built manifest declares API level $level, expected $DALAMUD_API_LEVEL."
             exit 1
           fi
 
