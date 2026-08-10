@@ -34,6 +34,12 @@ public sealed class Plugin : IDalamudPlugin
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
+        // Started first and left to run: it pages the Excel sheets the results are built from into
+        // memory on a background thread, which is what the first build of a session spends its time
+        // on. Nothing waits on it - if the dresser is opened before it finishes, the build pays the
+        // cost itself exactly as it used to.
+        SheetWarmup.Start();
+
         // Built before the windows: MainWindow subscribes to its open/close events.
         DresserScanner = new DresserScanner();
 
@@ -61,6 +67,9 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
+        // Asked to stop first, so an unload during a cold start doesn't leave it walking sheets.
+        SheetWarmup.Stop();
+
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;

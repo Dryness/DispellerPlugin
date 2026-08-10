@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Lumina.Excel.Sheets;
 
 namespace Dispeller.Services;
@@ -49,6 +50,28 @@ internal static class OutfitService
         }
 
         return built;
+    }
+
+    /// <summary>
+    /// Builds the index now rather than on the first question asked of it, so the framework thread
+    /// finds it already there. This does the work rather than merely warming the pages it reads
+    /// from - the index is static sheet data and cannot go stale.
+    ///
+    /// Racing the framework thread here is harmless: the loser builds an identical dictionary and
+    /// the reference assignment discards it.
+    /// </summary>
+    internal static long Warm(CancellationToken token)
+    {
+        if (token.IsCancellationRequested)
+            return 0;
+
+        // Summed and returned so the caller has something observable to log - a build whose result
+        // went nowhere would be a read the compiler is free to drop.
+        long touched = Components.Count;
+        foreach (var pieces in Components.Values)
+            touched += pieces.Length;
+
+        return touched;
     }
 
     /// <summary>
