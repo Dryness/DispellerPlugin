@@ -34,6 +34,11 @@ public sealed class Plugin : IDalamudPlugin
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
+        // Runs before anything reads a setting. A version 1 config kept everything but the hides
+        // account-wide, and without this each character on file would silently pick up the
+        // shipped defaults instead of what the user had chosen.
+        Configuration.Migrate();
+
         // Started first and left to run: it pages the Excel sheets the results are built from into
         // memory on a background thread, which is what the first build of a session spends its time
         // on. Nothing waits on it - if the dresser is opened before it finishes, the build pays the

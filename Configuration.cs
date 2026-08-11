@@ -1,4 +1,5 @@
 using Dalamud.Configuration;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -11,33 +12,143 @@ public class Configuration : IPluginConfiguration
     // 0 was the upstream shape, carrying ShowOnlyWeapons/ShowOnlyClothing. Those were never
     // read by anything and are gone; Dalamud's deserialiser ignores the leftover keys, so an
     // existing config file still loads.
-    public int Version { get; set; } = 1;
+    //
+    // 1 kept every setting except the hides account-wide. 2 moved all of them per character -
+    // see Migrate, which is what carries an existing config's answers across.
+    public int Version { get; set; } = 2;
+
+    // ---------------------------------------------------------------------------------------
+    // Defaults for a character the plugin has not seen before.
+    //
+    // These are the keys version 1 wrote, kept under their original JSON names so an existing
+    // config still loads into them. That is deliberate and is what stops the move to
+    // per-character settings resetting anybody: a new character inherits whatever was configured
+    // when settings were account-wide, and on a fresh install those keys are simply the shipped
+    // defaults, so one path covers both.
+    //
+    // Nothing reads these directly except record creation and Migrate. Every live read goes
+    // through the accessors below.
+    // ---------------------------------------------------------------------------------------
+
+    [JsonProperty("HideOnZoneChange")] public bool DefaultHideOnZoneChange { get; set; } = false;
+    [JsonProperty("OpenWithGlamourDresser")] public bool DefaultOpenWithGlamourDresser { get; set; } = true;
+    [JsonProperty("HideWhenLeavingGlamourDresser")] public bool DefaultHideWhenLeavingGlamourDresser { get; set; } = false;
+    [JsonProperty("CountRecoloursAsDuplicates")] public bool DefaultCountRecoloursAsDuplicates { get; set; } = true;
+    [JsonProperty("TagOutfitComponents")] public bool DefaultTagOutfitComponents { get; set; } = true;
+    [JsonProperty("ShowHiddenItems")] public bool DefaultShowHiddenItems { get; set; } = false;
+
+    private Dictionary<ulong, CharacterSettings> settingsByCharacter = [];
 
     /// <summary>
-    /// Hide the window on a zone change. Only hides it - <c>/dispeller</c> brings it back.
+    /// Every setting and every hide, per character, keyed on content id - the same identity the
+    /// dresser cache files are named for.
+    ///
+    /// Per character because that is what the plugin describes: the Glamour Dresser belongs to
+    /// the character, so how one character's results are matched, filtered and displayed is not a
+    /// statement about anyone else's dresser. Kept inside the config rather than in its own file
+    /// because Save() is what bumps <see cref="Revision"/>, and that is what makes the results
+    /// rebuild when a setting changes.
+    ///
+    /// Still written under the old <c>HidesByCharacter</c> key. The record gained fields rather
+    /// than changing shape, so a version 1 file deserialises into it untouched, and renaming the
+    /// key would have thrown every existing hide away for cosmetics.
+    ///
+    /// The setter tolerates a null out of the deserialiser: an older config has no such key and
+    /// keeps the initialiser, but a hand-edited or truncated one could hand us null, and a null
+    /// here would throw on every draw.
     /// </summary>
-    public bool HideOnZoneChange { get; set; } = false;
+    [JsonProperty("HidesByCharacter")]
+    public Dictionary<ulong, CharacterSettings> SettingsByCharacter
+    {
+        get => settingsByCharacter;
+        set => settingsByCharacter = value ?? [];
+    }
+
+    /// <summary>
+    /// Brings a version 1 config forward. Every character already on file kept their hides but
+    /// would otherwise have picked up the shipped defaults for the six settings that used to be
+    /// account-wide, silently discarding what the user had actually chosen - so those values are
+    /// copied into each existing record before anything reads one.
+    ///
+    /// Called once from the plugin's constructor rather than from a property, because it has to
+    /// happen after Dalamud has finished deserialising and exactly once.
+    /// </summary>
+    public void Migrate()
+    {
+        if (Version >= 2)
+            return;
+
+        foreach (var settings in settingsByCharacter.Values)
+            ApplyDefaults(settings);
+
+        Version = 2;
+        Save();
+        Plugin.Log.Information(
+            $"Config migrated to per-character settings for {settingsByCharacter.Count} character(s)");
+    }
+
+    private void ApplyDefaults(CharacterSettings settings)
+    {
+        settings.HideOnZoneChange = DefaultHideOnZoneChange;
+        settings.OpenWithGlamourDresser = DefaultOpenWithGlamourDresser;
+        settings.HideWhenLeavingGlamourDresser = DefaultHideWhenLeavingGlamourDresser;
+        settings.CountRecoloursAsDuplicates = DefaultCountRecoloursAsDuplicates;
+        settings.TagOutfitComponents = DefaultTagOutfitComponents;
+        settings.ShowHiddenItems = DefaultShowHiddenItems;
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The live settings. Named exactly as the stored ones used to be, so every call site reads
+    // and writes the logged-in character's answer without knowing that is what it is doing.
+    //
+    // JsonIgnore on all of them: the stored copy lives in the character's record, and letting
+    // these serialise would write a second, account-wide copy of every setting straight back
+    // into the file the move was meant to empty.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>Hide the window on a zone change. Only hides it - <c>/dispeller</c> brings it back.</summary>
+    [JsonIgnore]
+    public bool HideOnZoneChange
+    {
+        get => Read(s => s.HideOnZoneChange, DefaultHideOnZoneChange);
+        set => Write((s, v) => s.HideOnZoneChange = v, value);
+    }
 
     /// <summary>
     /// Open the window when the Glamour Dresser opens. Edge-triggered on the addon appearing,
     /// never level-triggered, so closing the window by hand while the dresser is still open
     /// leaves it closed.
     /// </summary>
-    public bool OpenWithGlamourDresser { get; set; } = true;
+    [JsonIgnore]
+    public bool OpenWithGlamourDresser
+    {
+        get => Read(s => s.OpenWithGlamourDresser, DefaultOpenWithGlamourDresser);
+        set => Write((s, v) => s.OpenWithGlamourDresser = v, value);
+    }
 
     /// <summary>
     /// Hide the window again when the Glamour Dresser closes. A sub-option of
     /// <see cref="OpenWithGlamourDresser"/> - it does nothing on its own, so that switching
     /// the parent off cannot leave a stray behaviour running.
     /// </summary>
-    public bool HideWhenLeavingGlamourDresser { get; set; } = false;
+    [JsonIgnore]
+    public bool HideWhenLeavingGlamourDresser
+    {
+        get => Read(s => s.HideWhenLeavingGlamourDresser, DefaultHideWhenLeavingGlamourDresser);
+        set => Write((s, v) => s.HideWhenLeavingGlamourDresser = v, value);
+    }
 
     /// <summary>
     /// Match on the mesh alone, so a recolour of a garment counts as a redundant glamour.
     /// This is the plugin's whole point, so it defaults on; off compares the material/colour
     /// variant too and finds far fewer duplicates.
     /// </summary>
-    public bool CountRecoloursAsDuplicates { get; set; } = true;
+    [JsonIgnore]
+    public bool CountRecoloursAsDuplicates
+    {
+        get => Read(s => s.CountRecoloursAsDuplicates, DefaultCountRecoloursAsDuplicates);
+        set => Write((s, v) => s.CountRecoloursAsDuplicates = v, value);
+    }
 
     /// <summary>
     /// Tag rows whose item is a piece of an outfit held in the dresser. Defaults on: knowing a
@@ -49,72 +160,91 @@ public class Configuration : IPluginConfiguration
     /// is a matter of taste. Switching it off leaves the tooltip's "Part of ..." line, so the
     /// answer is still one hover away.
     /// </summary>
-    public bool TagOutfitComponents { get; set; } = true;
+    [JsonIgnore]
+    public bool TagOutfitComponents
+    {
+        get => Read(s => s.TagOutfitComponents, DefaultTagOutfitComponents);
+        set => Write((s, v) => s.TagOutfitComponents = v, value);
+    }
 
     /// <summary>
     /// Show hidden items anyway, tagged as hidden, so they can be right-clicked back into the
     /// results. This does not merely append them: it switches hiding off wholesale, including
     /// for the shared-model test, so what you see is exactly the unfiltered picture.
     ///
-    /// The master switch, and the one piece of this that is account-wide: it is a preference
-    /// about how results are displayed, not a record of what any character has hidden.
-    /// <see cref="CharacterHides.RevealedSlots"/> does the same thing one section at a time.
+    /// The master switch. <see cref="CharacterSettings.RevealedSlots"/> does the same thing one
+    /// section at a time, and this wins over every one of them.
     /// </summary>
-    public bool ShowHiddenItems { get; set; } = false;
-
-    private Dictionary<ulong, CharacterHides> hidesByCharacter = [];
-
-    /// <summary>
-    /// What each character has hidden, keyed on their content id - the same identity the
-    /// dresser cache files are named for.
-    ///
-    /// Per character, not per account, for the same reason the dresser cache is: the Glamour
-    /// Dresser belongs to the character, so an item one character has no room for is not a
-    /// statement about anyone else's dresser. Kept inside the config rather than in its own
-    /// file because it is a handful of ids, and because Save() is what bumps
-    /// <see cref="Revision"/> and so what makes the results rebuild on a hide.
-    ///
-    /// The setter tolerates a null out of the deserialiser: an older config has no such key
-    /// and keeps the initialiser, but a hand-edited or truncated one could hand us null, and a
-    /// null here would throw on every draw.
-    /// </summary>
-    public Dictionary<ulong, CharacterHides> HidesByCharacter
+    [JsonIgnore]
+    public bool ShowHiddenItems
     {
-        get => hidesByCharacter;
-        set => hidesByCharacter = value ?? [];
+        get => Read(s => s.ShowHiddenItems, DefaultShowHiddenItems);
+        set => Write((s, v) => s.ShowHiddenItems = v, value);
     }
 
     /// <summary>
     /// 0 while logged out, exactly as DresserScanner reads it. Everything below treats 0 as
-    /// "no character", which is the honest answer: there is no dresser on screen to hide from.
+    /// "no character", which is the honest answer: there is no dresser on screen to describe.
     /// </summary>
     private static ulong CurrentContentId
         => Plugin.ClientState.IsLoggedIn ? Plugin.PlayerState.ContentId : 0;
 
+    /// <summary>
+    /// True when there is a character to read settings for. The settings window asks, because a
+    /// toggle that silently refuses to stick is worse than one that is not offered.
+    /// </summary>
+    [JsonIgnore]
+    public static bool HasCharacter => CurrentContentId != 0;
+
     /// <summary>The logged-in character's record, or null if there is none. Never creates one.</summary>
-    private CharacterHides? Current
+    private CharacterSettings? Current
     {
         get
         {
             var contentId = CurrentContentId;
-            return contentId != 0 && hidesByCharacter.TryGetValue(contentId, out var hides) ? hides : null;
+            return contentId != 0 && settingsByCharacter.TryGetValue(contentId, out var s) ? s : null;
         }
     }
 
     /// <summary>
-    /// The logged-in character's record, created if this is their first hide. Null while
-    /// logged out - there is nothing to key a record on, and nothing on screen to hide.
+    /// The logged-in character's record, created on first use and seeded from the defaults above.
+    /// Null while logged out - there is nothing to key a record on.
     /// </summary>
-    private CharacterHides? CurrentForWrite()
+    private CharacterSettings? CurrentForWrite()
     {
         var contentId = CurrentContentId;
         if (contentId == 0)
             return null;
 
-        if (!hidesByCharacter.TryGetValue(contentId, out var hides))
-            hidesByCharacter[contentId] = hides = new CharacterHides();
+        if (!settingsByCharacter.TryGetValue(contentId, out var settings))
+        {
+            settingsByCharacter[contentId] = settings = new CharacterSettings();
+            ApplyDefaults(settings);
+        }
 
-        return hides;
+        return settings;
+    }
+
+    /// <summary>Reads one setting, falling back to the default while logged out or before a first write.</summary>
+    private T Read<T>(Func<CharacterSettings, T> get, T fallback)
+    {
+        var settings = Current;
+        return settings == null ? fallback : get(settings);
+    }
+
+    /// <summary>
+    /// Writes one setting and persists it. A write while logged out is dropped rather than
+    /// applied to the defaults: those describe a character we have not met, and quietly editing
+    /// them from the title screen would change what every future character starts with.
+    /// </summary>
+    private void Write<T>(Action<CharacterSettings, T> set, T value)
+    {
+        var settings = CurrentForWrite();
+        if (settings == null)
+            return;
+
+        set(settings, value);
+        Save();
     }
 
     private static int revision;
@@ -123,6 +253,9 @@ public class Configuration : IPluginConfiguration
     /// Bumped on every save. MainWindow watches this the same way it watches
     /// <see cref="Services.DresserScanner.Generation"/>, so a setting that changes what the
     /// results should contain rebuilds them without either window knowing about the other.
+    ///
+    /// A character switch needs no equivalent: DresserScanner.SwitchCharacter already bumps its
+    /// own generation, and that rebuild picks up the new character's settings along the way.
     /// </summary>
     public static int Revision => Volatile.Read(ref revision);
 
@@ -133,9 +266,11 @@ public class Configuration : IPluginConfiguration
     }
 
     /// <summary>How many items the logged-in character has hidden. 0 while logged out.</summary>
+    [JsonIgnore]
     public int HiddenCount => Current?.HiddenItemIds.Count ?? 0;
 
     /// <summary>How many of their sections are revealing them. 0 while logged out.</summary>
+    [JsonIgnore]
     public int RevealedSlotCount => Current?.RevealedSlots.Count ?? 0;
 
     public bool IsHidden(uint itemId) => Current?.HiddenItemIds.Contains(itemId) ?? false;
@@ -148,11 +283,11 @@ public class Configuration : IPluginConfiguration
     /// </summary>
     public void SetHidden(uint itemId, bool hidden)
     {
-        var hides = CurrentForWrite();
-        if (hides == null)
+        var settings = CurrentForWrite();
+        if (settings == null)
             return;
 
-        var changed = hidden ? hides.HiddenItemIds.Add(itemId) : hides.HiddenItemIds.Remove(itemId);
+        var changed = hidden ? settings.HiddenItemIds.Add(itemId) : settings.HiddenItemIds.Remove(itemId);
         if (changed)
             Save();
     }
@@ -173,11 +308,11 @@ public class Configuration : IPluginConfiguration
 
     public void SetSlotRevealed(string slotCategory, bool revealed)
     {
-        var hides = CurrentForWrite();
-        if (hides == null)
+        var settings = CurrentForWrite();
+        if (settings == null)
             return;
 
-        var changed = revealed ? hides.RevealedSlots.Add(slotCategory) : hides.RevealedSlots.Remove(slotCategory);
+        var changed = revealed ? settings.RevealedSlots.Add(slotCategory) : settings.RevealedSlots.Remove(slotCategory);
         if (changed)
             Save();
     }
@@ -189,28 +324,40 @@ public class Configuration : IPluginConfiguration
     /// </summary>
     public void UnhideAll()
     {
-        var hides = Current;
-        if (hides == null || (hides.HiddenItemIds.Count == 0 && hides.RevealedSlots.Count == 0))
+        var settings = Current;
+        if (settings == null || (settings.HiddenItemIds.Count == 0 && settings.RevealedSlots.Count == 0))
             return;
 
-        hides.HiddenItemIds.Clear();
+        settings.HiddenItemIds.Clear();
 
         // The per-section reveals go with them. A reveal is an instruction about hidden items,
         // and leaving one armed would silently change what a section shows the next time
         // something in it is hidden.
-        hides.RevealedSlots.Clear();
+        settings.RevealedSlots.Clear();
 
         Save();
     }
 }
 
 /// <summary>
-/// One character's hidden items and the sections currently showing them. Both are per
-/// character for the same reason: they describe that character's dresser.
+/// One character's settings, hidden items, and the sections currently showing them. All of it is
+/// per character for the same reason: it describes that character's dresser.
+///
+/// The field initialisers here are only reached by a record built outside
+/// <c>CurrentForWrite</c> - a version 1 record being deserialised, which <c>Migrate</c> then
+/// overwrites. A record created for a new character is seeded from the config's defaults
+/// instead, so the two paths do not disagree about what a fresh character starts with.
 /// </summary>
 [Serializable]
-public class CharacterHides
+public class CharacterSettings
 {
+    public bool HideOnZoneChange { get; set; } = false;
+    public bool OpenWithGlamourDresser { get; set; } = true;
+    public bool HideWhenLeavingGlamourDresser { get; set; } = false;
+    public bool CountRecoloursAsDuplicates { get; set; } = true;
+    public bool TagOutfitComponents { get; set; } = true;
+    public bool ShowHiddenItems { get; set; } = false;
+
     /// <summary>
     /// Hidden dresser entries, keyed on the <b>raw</b> ItemId - so an HQ entry (stored at
     /// ItemId + 1,000,000) hides independently of its NQ twin, which is what the dresser shows

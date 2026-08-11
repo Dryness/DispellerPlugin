@@ -65,6 +65,29 @@ public class ConfigWindow : Window, IDisposable
 
     private void DrawSettings()
     {
+        // Every setting belongs to the logged-in character, so with none there is nothing to
+        // write to and a write is dropped. Said plainly and the controls withheld, rather than
+        // drawn and left to silently refuse - a checkbox that does not stick reads as a bug.
+        if (!Configuration.HasCharacter)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.StaleNotice);
+            ImGui.TextWrapped(
+                "Settings are saved per character. Log in to change them.");
+            ImGui.PopStyleColor();
+            return;
+        }
+
+        // Stated once at the top rather than repeated on each setting. The hidden-items section
+        // below still says "on this character" for its counts, because those are facts about
+        // this character rather than a note about where the setting lives.
+        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.MutedText);
+        ImGui.TextWrapped("These settings apply to the character you are logged in as.");
+        ImGui.PopStyleColor();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
         DrawSectionTitle("Window behaviour");
 
         DrawSetting(
