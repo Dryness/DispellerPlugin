@@ -15,11 +15,13 @@ public class ConfigWindow : Window, IDisposable
 {
     private readonly Configuration configuration;
 
+    /// <remarks>
+    /// The title is distinct from the original plugin's for the same reason the main window's is:
+    /// it doubles as the ImGui window id, so anyone running both would get a clash.
+    /// </remarks>
     public ConfigWindow(Plugin plugin)
         : base("Dispeller Continued - Settings", ImGuiWindowFlags.NoScrollbar)
     {
-        // Distinct from the original plugin's windows for the same reason the main window is:
-        // the title doubles as the ImGui window ID, so anyone running both would get a clash.
         Size = new Vector2(520, 400);
         SizeCondition = ImGuiCond.FirstUseEver;
         SizeConstraints = new WindowSizeConstraints
@@ -41,16 +43,15 @@ public class ConfigWindow : Window, IDisposable
 
         ImGui.Spacing();
 
-        // The window is NoScrollbar so the gradient band stays flush with its edges, which
-        // leaves the body with nowhere to go if it overflows a small window. Scrolling the
-        // body inside a child gives it somewhere.
-        //
-        // ImRaii.Child ends the child unconditionally - ImGui requires EndChild() even when
-        // BeginChild() returns false.
+        // The window is NoScrollbar so the gradient band stays flush with its edges, which leaves
+        // the body nowhere to go if it overflows; a child gives it somewhere to scroll.
         //
         // Scoped rather than left to the end of Draw(), because the footer has to be drawn
         // outside the child to pin to the window rather than to the scrolling body. A negative
         // height means "content region avail minus this much", keeping the body clear of it.
+        //
+        // ImRaii.Child ends the child unconditionally - ImGui requires EndChild() even when
+        // BeginChild() returns false.
         using (var child = ImRaii.Child(
             "SettingsBody",
             new Vector2(0, -(UiStyle.FooterHeight + ImGui.GetStyle().ItemSpacing.Y)),
@@ -66,8 +67,8 @@ public class ConfigWindow : Window, IDisposable
     private void DrawSettings()
     {
         // Every setting belongs to the logged-in character, so with none there is nothing to
-        // write to and a write is dropped. Said plainly and the controls withheld, rather than
-        // drawn and left to silently refuse - a checkbox that does not stick reads as a bug.
+        // write to. The controls are withheld rather than drawn and left to silently refuse - a
+        // checkbox that does not stick reads as a bug.
         if (!Configuration.HasCharacter)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.StaleNotice);
@@ -77,9 +78,7 @@ public class ConfigWindow : Window, IDisposable
             return;
         }
 
-        // Stated once at the top rather than repeated on each setting. The hidden-items section
-        // below still says "on this character" for its counts, because those are facts about
-        // this character rather than a note about where the setting lives.
+        // Stated once at the top rather than repeated on each setting.
         ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.MutedText);
         ImGui.TextWrapped("These settings apply to the character you are logged in as.");
         ImGui.PopStyleColor();
@@ -150,9 +149,9 @@ public class ConfigWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// The other half of the main window's right-click menu. Hiding is silent by design, so
-    /// this is where the count lives and where a hide made months ago can be undone without
-    /// having to remember which item it was.
+    /// The other half of the main window's right-click menu. Hiding is silent by design, so this
+    /// is where the count lives and where an old hide can be undone without having to remember
+    /// which item it was.
     /// </summary>
     private void DrawHiddenItems()
     {
@@ -167,8 +166,8 @@ public class ConfigWindow : Window, IDisposable
             configuration.ShowHiddenItems,
             value => configuration.ShowHiddenItems = value);
 
-        // "on this character" is not padding: hides follow the character, like the dresser
-        // they describe, and this is the only place that says so.
+        // "on this character" is not padding: hides follow the character, like the dresser they
+        // describe, and this is the only place that says so.
         ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.MutedText);
         ImGui.TextUnformatted(hiddenCount switch
         {
@@ -188,8 +187,8 @@ public class ConfigWindow : Window, IDisposable
 
         ImGui.Spacing();
 
-        // Ctrl-held, the Dalamud convention for a button that cannot be undone. There is no
-        // record of what was hidden once this runs, so a stray click would cost real work.
+        // Ctrl-held, the Dalamud convention for a button that cannot be undone: nothing records
+        // what was hidden once this runs, so a stray click would cost real work.
         var ctrl = ImGui.GetIO().KeyCtrl;
         using (ImRaii.Disabled(!ctrl))
         {
@@ -226,15 +225,15 @@ public class ConfigWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// One checkbox with its explanation underneath, for the settings whose consequences are
-    /// not obvious from the label.
+    /// One checkbox with its explanation underneath, for the settings whose consequences are not
+    /// obvious from the label.
     /// </summary>
     private void DrawSetting(string label, string help, bool current, Action<bool> set)
     {
         DrawCheckbox(label, current, set);
 
-        // Indent the help to clear the checkbox, so it reads as belonging to it rather than
-        // as a paragraph between two settings.
+        // Indented clear of the checkbox, so the help reads as belonging to it rather than as a
+        // paragraph between two settings.
         var indent = ImGui.GetFrameHeight() + ImGui.GetStyle().ItemInnerSpacing.X;
 
         ImGui.Indent(indent);
@@ -247,16 +246,14 @@ public class ConfigWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Saving on change is what gives Configuration.Save() its first caller, and bumping the
-    /// revision is what makes the results rebuild for settings that change them.
+    /// Setting the property is the whole of the write: each one goes through Configuration.Write,
+    /// which persists it and bumps the revision that rebuilds the results. There is deliberately
+    /// no Save() call here - it would cost a second file write and revision bump per click.
     /// </summary>
     private void DrawCheckbox(string label, bool current, Action<bool> set)
     {
         var value = current;
         if (ImGui.Checkbox(label, ref value))
-        {
             set(value);
-            configuration.Save();
-        }
     }
 }

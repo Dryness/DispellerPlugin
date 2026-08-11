@@ -2,6 +2,7 @@ using Dalamud.Configuration;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading;
 
 namespace Dispeller;
@@ -9,26 +10,19 @@ namespace Dispeller;
 [Serializable]
 public class Configuration : IPluginConfiguration
 {
-    // 0 was the upstream shape, carrying ShowOnlyWeapons/ShowOnlyClothing. Those were never
-    // read by anything and are gone; Dalamud's deserialiser ignores the leftover keys, so an
-    // existing config file still loads.
-    //
-    // 1 kept every setting except the hides account-wide. 2 moved all of them per character -
-    // see Migrate, which is what carries an existing config's answers across.
+    /// <summary>
+    /// 1 kept every setting except the hides account-wide; 2 moved all of them per character.
+    /// See <see cref="Migrate"/>, which carries an existing config's answers across.
+    /// </summary>
     public int Version { get; set; } = 2;
 
-    // ---------------------------------------------------------------------------------------
     // Defaults for a character the plugin has not seen before.
     //
-    // These are the keys version 1 wrote, kept under their original JSON names so an existing
-    // config still loads into them. That is deliberate and is what stops the move to
-    // per-character settings resetting anybody: a new character inherits whatever was configured
-    // when settings were account-wide, and on a fresh install those keys are simply the shipped
-    // defaults, so one path covers both.
-    //
-    // Nothing reads these directly except record creation and Migrate. Every live read goes
-    // through the accessors below.
-    // ---------------------------------------------------------------------------------------
+    // These keep the JSON names version 1 wrote, so an existing config loads into them - which is
+    // what stops the move to per-character settings resetting anybody. A new character inherits
+    // whatever was configured account-wide, and on a fresh install these are simply the shipped
+    // defaults, so one path covers both. Nothing reads them directly except record creation and
+    // Migrate; every live read goes through the accessors further down.
 
     [JsonProperty("HideOnZoneChange")] public bool DefaultHideOnZoneChange { get; set; } = false;
     [JsonProperty("OpenWithGlamourDresser")] public bool DefaultOpenWithGlamourDresser { get; set; } = true;
@@ -41,21 +35,18 @@ public class Configuration : IPluginConfiguration
 
     /// <summary>
     /// Every setting and every hide, per character, keyed on content id - the same identity the
-    /// dresser cache files are named for.
+    /// dresser cache files are named for. Per character because the Glamour Dresser is: how one
+    /// character's results are matched, filtered and displayed says nothing about anyone else's.
     ///
-    /// Per character because that is what the plugin describes: the Glamour Dresser belongs to
-    /// the character, so how one character's results are matched, filtered and displayed is not a
-    /// statement about anyone else's dresser. Kept inside the config rather than in its own file
-    /// because Save() is what bumps <see cref="Revision"/>, and that is what makes the results
-    /// rebuild when a setting changes.
+    /// Kept inside the config rather than in its own file because <see cref="Save"/> is what
+    /// bumps <see cref="Revision"/>, and that is what rebuilds the results when a setting changes.
     ///
-    /// Still written under the old <c>HidesByCharacter</c> key. The record gained fields rather
-    /// than changing shape, so a version 1 file deserialises into it untouched, and renaming the
-    /// key would have thrown every existing hide away for cosmetics.
+    /// Still written under the old <c>HidesByCharacter</c> key: the record gained fields rather
+    /// than changing shape, so an older file deserialises into it untouched, and renaming the key
+    /// would throw every existing hide away for cosmetics.
     ///
-    /// The setter tolerates a null out of the deserialiser: an older config has no such key and
-    /// keeps the initialiser, but a hand-edited or truncated one could hand us null, and a null
-    /// here would throw on every draw.
+    /// The setter tolerates a null out of the deserialiser, which a hand-edited or truncated file
+    /// could produce; a null here would throw on every draw.
     /// </summary>
     [JsonProperty("HidesByCharacter")]
     public Dictionary<ulong, CharacterSettings> SettingsByCharacter
@@ -65,13 +56,12 @@ public class Configuration : IPluginConfiguration
     }
 
     /// <summary>
-    /// Brings a version 1 config forward. Every character already on file kept their hides but
-    /// would otherwise have picked up the shipped defaults for the six settings that used to be
-    /// account-wide, silently discarding what the user had actually chosen - so those values are
-    /// copied into each existing record before anything reads one.
+    /// Brings an older config forward by copying the account-wide answers into every character
+    /// already on file. Without it they would keep their hides but silently pick up the shipped
+    /// defaults for everything else.
     ///
-    /// Called once from the plugin's constructor rather than from a property, because it has to
-    /// happen after Dalamud has finished deserialising and exactly once.
+    /// Called from the plugin's constructor rather than from a property, because it has to happen
+    /// after Dalamud has finished deserialising and exactly once.
     /// </summary>
     public void Migrate()
     {
@@ -97,14 +87,11 @@ public class Configuration : IPluginConfiguration
         settings.ShowHiddenItems = DefaultShowHiddenItems;
     }
 
-    // ---------------------------------------------------------------------------------------
-    // The live settings. Named exactly as the stored ones used to be, so every call site reads
-    // and writes the logged-in character's answer without knowing that is what it is doing.
+    // The live settings. Every call site reads and writes the logged-in character's answer
+    // without knowing that is what it is doing.
     //
     // JsonIgnore on all of them: the stored copy lives in the character's record, and letting
-    // these serialise would write a second, account-wide copy of every setting straight back
-    // into the file the move was meant to empty.
-    // ---------------------------------------------------------------------------------------
+    // these serialise would write a second, account-wide copy of every setting back into the file.
 
     /// <summary>Hide the window on a zone change. Only hides it - <c>/dispeller</c> brings it back.</summary>
     [JsonIgnore]
@@ -155,10 +142,10 @@ public class Configuration : IPluginConfiguration
     /// garment is part of a set changes what discarding it costs, and nothing else on the row
     /// says so.
     ///
-    /// A toggle rather than a fixture because it is a busy tag by nature - about half the items
-    /// in a full dresser are part of some outfit - and whether that reads as useful or as noise
-    /// is a matter of taste. Switching it off leaves the tooltip's "Part of ..." line, so the
-    /// answer is still one hover away.
+    /// A toggle rather than a fixture because it is a busy tag by nature - a large share of a
+    /// full dresser belongs to some outfit - and whether that reads as useful or as noise is a
+    /// matter of taste. Switching it off leaves the tooltip's "Part of ..." line, so the answer
+    /// is still one hover away.
     /// </summary>
     [JsonIgnore]
     public bool TagOutfitComponents
@@ -183,8 +170,8 @@ public class Configuration : IPluginConfiguration
     }
 
     /// <summary>
-    /// 0 while logged out, exactly as DresserScanner reads it. Everything below treats 0 as
-    /// "no character", which is the honest answer: there is no dresser on screen to describe.
+    /// 0 while logged out, exactly as <see cref="Services.DresserScanner"/> reads it. Everything
+    /// below treats 0 as "no character" - there is no dresser on screen to describe.
     /// </summary>
     private static ulong CurrentContentId
         => Plugin.ClientState.IsLoggedIn ? Plugin.PlayerState.ContentId : 0;
@@ -237,14 +224,18 @@ public class Configuration : IPluginConfiguration
     /// applied to the defaults: those describe a character we have not met, and quietly editing
     /// them from the title screen would change what every future character starts with.
     /// </summary>
-    private void Write<T>(Action<CharacterSettings, T> set, T value)
+    /// <remarks>
+    /// Every caller is a property setter, so <see cref="CallerMemberNameAttribute"/> names the
+    /// setting rather than this method, and the line <see cref="Save"/> writes names it too.
+    /// </remarks>
+    private void Write<T>(Action<CharacterSettings, T> set, T value, [CallerMemberName] string setting = "")
     {
         var settings = CurrentForWrite();
         if (settings == null)
             return;
 
         set(settings, value);
-        Save();
+        Save(setting);
     }
 
     private static int revision;
@@ -254,15 +245,20 @@ public class Configuration : IPluginConfiguration
     /// <see cref="Services.DresserScanner.Generation"/>, so a setting that changes what the
     /// results should contain rebuilds them without either window knowing about the other.
     ///
-    /// A character switch needs no equivalent: DresserScanner.SwitchCharacter already bumps its
-    /// own generation, and that rebuild picks up the new character's settings along the way.
+    /// A character switch needs no equivalent: the dresser scanner already bumps its own
+    /// generation, and that rebuild picks up the new character's settings along the way.
     /// </summary>
     public static int Revision => Volatile.Read(ref revision);
 
-    public void Save()
+    /// <summary>
+    /// Persists the config and bumps the revision. The caller is logged because a setting saved
+    /// twice for one click is otherwise invisible - both writes succeed and agree.
+    /// </summary>
+    public void Save([CallerMemberName] string caller = "")
     {
         Interlocked.Increment(ref revision);
         Plugin.PluginInterface.SavePluginConfig(this);
+        Plugin.Log.Debug($"Config saved from {caller} (revision {Revision})");
     }
 
     /// <summary>How many items the logged-in character has hidden. 0 while logged out.</summary>
@@ -276,10 +272,9 @@ public class Configuration : IPluginConfiguration
     public bool IsHidden(uint itemId) => Current?.HiddenItemIds.Contains(itemId) ?? false;
 
     /// <summary>
-    /// Hides or unhides one item for the logged-in character and persists it. Saving here is
-    /// what bumps <see cref="Revision"/>, which is how the results rebuild themselves the
-    /// moment the context menu closes - the row has to disappear, and so does whatever it was
-    /// the only remaining match for.
+    /// Hides or unhides one item for the logged-in character and persists it. Saving is what
+    /// bumps <see cref="Revision"/>, which rebuilds the results the moment the context menu
+    /// closes - the row has to disappear, and so does whatever it was the only match for.
     /// </summary>
     public void SetHidden(uint itemId, bool hidden)
     {
@@ -340,13 +335,13 @@ public class Configuration : IPluginConfiguration
 }
 
 /// <summary>
-/// One character's settings, hidden items, and the sections currently showing them. All of it is
-/// per character for the same reason: it describes that character's dresser.
+/// One character's settings, hidden items, and the sections currently showing them.
 ///
 /// The field initialisers here are only reached by a record built outside
-/// <c>CurrentForWrite</c> - a version 1 record being deserialised, which <c>Migrate</c> then
-/// overwrites. A record created for a new character is seeded from the config's defaults
-/// instead, so the two paths do not disagree about what a fresh character starts with.
+/// <see cref="Configuration.CurrentForWrite"/> - an older record being deserialised, which
+/// <see cref="Configuration.Migrate"/> then overwrites. A record created for a new character is
+/// seeded from the config's defaults instead, so the two paths cannot disagree about what a fresh
+/// character starts with.
 /// </summary>
 [Serializable]
 public class CharacterSettings
@@ -366,12 +361,11 @@ public class CharacterSettings
     public HashSet<uint> HiddenItemIds { get; set; } = [];
 
     /// <summary>
-    /// Slot categories ("Feet", "Body", ...) showing their hidden items, set by right-clicking
-    /// the section header. Persisted rather than session state: it changes what is on screen,
-    /// and state that quietly resets on a relog is state the user has to notice has gone.
+    /// Slot categories ("Feet", "Body", ...) showing their hidden items, set by right-clicking the
+    /// section header. Persisted rather than session state: it changes what is on screen, and
+    /// state that quietly resets on a relog is state the user has to notice has gone.
     ///
-    /// Keyed on the display name because that is the only identity a slot category has - it is
-    /// produced by MainWindow.GetSlotName and never stored anywhere else.
+    /// Keyed on the display name because that is the only identity a slot category has.
     /// </summary>
     public HashSet<string> RevealedSlots { get; set; } = [];
 }
