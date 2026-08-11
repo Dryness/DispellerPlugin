@@ -62,6 +62,8 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
 
+        ClientState.Logout += OnLogout;
+
         Log.Information($"===Dispeller Continued plugin loaded! Ready to find shared models!===");
     }
 
@@ -74,6 +76,8 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
 
+        ClientState.Logout -= OnLogout;
+
         WindowSystem.RemoveAllWindows();
 
         MainWindow.Dispose();
@@ -82,6 +86,25 @@ public sealed class Plugin : IDalamudPlugin
         ArmoireScanner.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
+    }
+
+    /// <summary>
+    /// Shuts both windows on logout. Everything they draw belongs to the character being left:
+    /// the caches are cleared on the way out, so a window left open at the title screen shows an
+    /// empty result and a prompt to open a dresser that is no longer reachable.
+    ///
+    /// Closed rather than hidden, and not reopened on the next login. A window that reappears by
+    /// itself is a surprise, and "open with the Glamour Dresser" already covers the case where
+    /// someone wants it back without asking.
+    ///
+    /// The settings window goes too, and now has to: every setting belongs to the character being
+    /// left, so once they are gone there is nothing for it to edit. It says as much if reopened
+    /// from the installer's cog at the title screen.
+    /// </summary>
+    private void OnLogout(int type, int code)
+    {
+        MainWindow.IsOpen = false;
+        ConfigWindow.IsOpen = false;
     }
 
     private void OnCommand(string command, string args)
