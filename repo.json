@@ -3,7 +3,7 @@
     "Author": "Dryness",
     "Name": "Dispeller Continued",
     "InternalName": "DispellerContinued",
-    "AssemblyVersion": "1.5.5.0",
+    "AssemblyVersion": "1.5.6.0",
     "Description": "A cute plugin to help you manage your Glamour Dresser by identifying items that share the same visual models.",
     "ApplicableVersion": "any",
     "Tags": [
@@ -25,7 +25,7 @@
     "DownloadLinkInstall": "https://github.com/Dryness/DispellerPlugin/releases/latest/download/latest.zip",
     "DownloadLinkUpdate": "https://github.com/Dryness/DispellerPlugin/releases/latest/download/latest.zip",
     "DownloadLinkTesting": "https://github.com/Dryness/DispellerPlugin/releases/latest/download/latest.zip",
-    "LastUpdate": "1786250591",
+    "LastUpdate": "1786411144",
     "IconUrl": "https://raw.githubusercontent.com/Dryness/DispellerPlugin/master/images/icon.png"
   }
 ]
