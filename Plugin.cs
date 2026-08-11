@@ -34,18 +34,15 @@ public sealed class Plugin : IDalamudPlugin
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
-        // Runs before anything reads a setting. A version 1 config kept everything but the hides
-        // account-wide, and without this each character on file would silently pick up the
-        // shipped defaults instead of what the user had chosen.
+        // Before anything reads a setting: an existing config needs its account-wide answers
+        // copied into each character's record, or they silently pick up the shipped defaults.
         Configuration.Migrate();
 
-        // Started first and left to run: it pages the Excel sheets the results are built from into
-        // memory on a background thread, which is what the first build of a session spends its time
-        // on. Nothing waits on it - if the dresser is opened before it finishes, the build pays the
-        // cost itself exactly as it used to.
+        // Started first and left to run. Nothing waits on it - a dresser opened before it
+        // finishes just pays the paging cost in the build instead.
         SheetWarmup.Start();
 
-        // Built before the windows: MainWindow subscribes to its open/close events.
+        // Before the windows: MainWindow subscribes to its open/close events.
         DresserScanner = new DresserScanner();
 
         // The Armoire has no addon of its own to follow, so nothing subscribes to this - the
@@ -94,17 +91,11 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     /// <summary>
-    /// Shuts both windows on logout. Everything they draw belongs to the character being left:
-    /// the caches are cleared on the way out, so a window left open at the title screen shows an
-    /// empty result and a prompt to open a dresser that is no longer reachable.
+    /// Shuts both windows on logout. Everything they draw belongs to the character being left -
+    /// the results, and the settings too, since every setting is that character's.
     ///
-    /// Closed rather than hidden, and not reopened on the next login. A window that reappears by
-    /// itself is a surprise, and "open with the Glamour Dresser" already covers the case where
-    /// someone wants it back without asking.
-    ///
-    /// The settings window goes too, and now has to: every setting belongs to the character being
-    /// left, so once they are gone there is nothing for it to edit. It says as much if reopened
-    /// from the installer's cog at the title screen.
+    /// Closed rather than hidden, and not reopened on the next login: a window that reappears by
+    /// itself is a surprise, and "open with the Glamour Dresser" already covers wanting it back.
     /// </summary>
     private void OnLogout(int type, int code)
     {
@@ -112,10 +103,12 @@ public sealed class Plugin : IDalamudPlugin
         ConfigWindow.IsOpen = false;
     }
 
+    /// <summary>
+    /// <c>/dispeller config</c> is the same door as the installer's cog and the window's own
+    /// title-bar button - people reach for whichever they already know.
+    /// </summary>
     private void OnCommand(string command, string args)
     {
-        // "/dispeller config" is the same door as the installer's cog and the window's own
-        // title-bar button - people reach for whichever they already know.
         var argument = args.Trim();
 
         if (argument.Equals("config", StringComparison.OrdinalIgnoreCase)

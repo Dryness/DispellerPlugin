@@ -8,19 +8,18 @@ namespace Dispeller.Services;
 /// <summary>
 /// The game's outfit sets - the "... Attire" bundles the Glamour Dresser groups pieces under.
 ///
-/// <c>MirageStoreSetItem</c> is keyed by the bundle's own item id and names the piece filling
-/// each equipment slot. It is the only complete answer to "what is in this outfit": the
-/// dresser's own <c>Slot</c> field groups a bundle with the pieces of it you hold, but a piece
-/// belonging to two sets carries only one Slot - 471 pieces game-wide do - so Slot alone
-/// attributes those to the wrong set half the time.
+/// <c>MirageStoreSetItem</c> is keyed by the bundle's own item id and names the piece filling each
+/// equipment slot. It is the only complete answer to "what is in this outfit": the dresser's own
+/// <c>Slot</c> field groups a bundle with the pieces of it you hold, but a piece belonging to two
+/// sets carries only one Slot, so Slot alone attributes those to the wrong set half the time.
 /// </summary>
 internal static class OutfitService
 {
     private static Dictionary<uint, uint[]>? components;
 
     /// <summary>
-    /// Every outfit set in the game: bundle item id to the item ids of its pieces. Built once
-    /// and kept - it is 1170 rows of static sheet data and cannot change while the game runs.
+    /// Every outfit set in the game: bundle item id to the item ids of its pieces. Built once and
+    /// kept - it is static sheet data and cannot change while the game runs.
     /// </summary>
     private static Dictionary<uint, uint[]> Components => components ??= BuildComponents();
 
@@ -31,8 +30,8 @@ internal static class OutfitService
 
         foreach (var row in sheet)
         {
-            // Row 0 is a placeholder that answers happily and means nothing - its Head points
-            // at Gil. Left in, it would make item id 1 a component of an outfit.
+            // Row 0 is a placeholder that answers happily and means nothing - its Head points at
+            // Gil. Left in, it would make item id 1 a component of an outfit.
             if (row.RowId == 0)
                 continue;
 
@@ -57,8 +56,8 @@ internal static class OutfitService
     /// finds it already there. This does the work rather than merely warming the pages it reads
     /// from - the index is static sheet data and cannot go stale.
     ///
-    /// Racing the framework thread here is harmless: the loser builds an identical dictionary and
-    /// the reference assignment discards it.
+    /// Racing the framework thread is harmless: the loser builds an identical dictionary and the
+    /// reference assignment discards it.
     /// </summary>
     internal static long Warm(CancellationToken token)
     {
@@ -75,8 +74,8 @@ internal static class OutfitService
     }
 
     /// <summary>
-    /// The pieces of one outfit, empty for an item that is not an outfit set. Ids are base ids
-    /// - the sheet has no notion of the dresser's HQ offset.
+    /// The pieces of one outfit, empty for an item that is not an outfit set. Ids are base ids -
+    /// the sheet has no notion of the dresser's HQ offset.
     /// </summary>
     public static IReadOnlyList<uint> GetComponents(uint setItemId)
         => Components.TryGetValue(setItemId, out var pieces) ? pieces : [];

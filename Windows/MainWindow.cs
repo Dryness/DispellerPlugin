@@ -12,10 +12,12 @@ using Dalamud.Interface.Textures.TextureWraps;
 using Lumina.Excel.Sheets;
 using Dispeller.Services;
 
-// yea i used emojis bc i wanted to be cute and funny so what 
-
 namespace Dispeller.Windows;
 
+/// <summary>
+/// The results window: the merged dresser and Armoire contents, grouped by equipment slot and
+/// then by shared model.
+/// </summary>
 public class MainWindow : Window, IDisposable
 {
     /// <summary>
@@ -28,10 +30,12 @@ public class MainWindow : Window, IDisposable
     private List<SharedModelGroup>? sharedGroups;
     private string statusMessage = "Open your Glamour Dresser to get started!";
 
-    // Carried alongside the message rather than derived from it, because the status line says two
-    // different kinds of thing: a prompt for something the plugin still needs, which reads as the
-    // same class of message as the stale-cache notices, and a summary of what it found, which does
-    // not. Deriving the colour would mean matching on the text.
+    /// <summary>
+    /// Carried alongside the message rather than derived from it. The status line says two kinds
+    /// of thing - a prompt for something the plugin still needs, which belongs with the
+    /// stale-cache notices, and a summary of what it found, which does not - and deriving the
+    /// colour would mean matching on the text.
+    /// </summary>
     private Vector4 statusColor = UiStyle.StaleNotice;
     private int lastGeneration = DresserScanner.Generation;
     private int lastArmoireGeneration = ArmoireScanner.Generation;
@@ -92,31 +96,35 @@ public class MainWindow : Window, IDisposable
             IsOpen = false;
     }
 
-    // Both of these are driven by DresserScanner's edge-triggered events, so the window only
-    // moves at the moment the dresser opens or closes. Reacting to "the dresser is open"
-    // every frame instead would make the window impossible to close while standing at one.
+    /// <summary>
+    /// Driven by the scanner's edge-triggered events, so the window only moves at the moment the
+    /// dresser opens. Reacting to "the dresser is open" every frame would make the window
+    /// impossible to close while standing at one.
+    /// </summary>
     private void OnDresserOpened()
     {
         if (plugin.Configuration.OpenWithGlamourDresser)
             IsOpen = true;
     }
 
+    /// <summary>
+    /// Gated on the parent setting as well as its own. Hiding on the way out is a sub-option of
+    /// opening on the way in, and the settings window only offers it while the parent is on - so
+    /// it must not keep acting once the parent is switched off.
+    /// </summary>
     private void OnDresserClosed()
     {
-        // Gated on the parent as well as on its own toggle. Hiding on the way out is a
-        // sub-option of opening on the way in, and the settings window only offers it while
-        // the parent is on - so it must not keep acting once the parent is switched off.
         if (plugin.Configuration.OpenWithGlamourDresser && plugin.Configuration.HideWhenLeavingGlamourDresser)
             IsOpen = false;
     }
 
     /// <summary>
-    /// Expanded sections are session state and shouldn't carry across a login. ImGui keeps
-    /// header state in the window's storage for as long as the game runs, so it has to be
-    /// collapsed deliberately - it won't lapse on its own.
+    /// Expanded sections are session state and should not carry across a login. ImGui keeps header
+    /// state in the window's storage for as long as the game runs, so it has to be collapsed
+    /// deliberately - it will not lapse on its own.
     ///
-    /// The cache itself is not touched here: DresserScanner watches the logged-in character
-    /// and swaps in that character's saved copy on its own.
+    /// The caches are not touched here: each scanner watches the logged-in character and swaps in
+    /// that character's saved copy on its own.
     /// </summary>
     private void OnLogin()
     {
@@ -125,48 +133,44 @@ public class MainWindow : Window, IDisposable
 
     public override void Draw()
     {
-        // The caches re-read themselves as the game is played. Rebuild when either store's
-        // contents have actually changed - opening the dresser, changing its view, depositing
-        // or retrieving; likewise for the Armoire, it only updates on storing or removing an item.
-        // This way the results never quietly describe an older read. 
-        // A settings change rebuilds too: cheaper than working out which settings the results depend
-        //  on, and it cannot leave stale results on screen.
+        // Rebuild whenever either store's contents have actually changed, so the results never
+        // quietly describe an older read. A settings change rebuilds too: cheaper than working out
+        // which settings the results depend on, and it cannot leave stale results on screen.
         if (DresserScanner.Generation != lastGeneration
             || ArmoireScanner.Generation != lastArmoireGeneration
             || Configuration.Revision != lastConfigRevision)
             BuildGroups();
 
-        // Pink gradient header
         DrawHeader();
-        
+
         ImGui.Spacing();
 
-        // Status message
         DrawStatus();
-
-        // Cached-data notice
         DrawCachedNotice();
 
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
 
-        // Results display, sized to leave room for the footer
         DrawResults(UiStyle.FooterHeight);
 
         UiStyle.DrawPinnedFooter("Find shared models in your glamour dresser!", UiStyle.BrightWhite);
     }
 
+    /// <summary>
+    /// The game font has no emoji, so <c>SeIconChar</c> glyphs are used instead - they are drawn
+    /// from the game's own font and scale with it.
+    /// </summary>
     private void DrawHeader()
     {
-        // The game font has no emoji, so the original sparkles rendered as nothing at all.
-        // SeIconChar glyphs are drawn from the game's own font and scale with it.
         UiStyle.DrawHeaderBand($"{(char)SeIconChar.Hyadelyn} Dispeller {(char)SeIconChar.Hyadelyn}");
     }
 
-    // Routed through the same helper as the notices, so the status line gets the clamped centring
-    // too - "Found N redundant items ... M perfect duplicates. (K hidden)" is the longest string
-    // the window draws, and it was the one most able to walk off the left edge.
+    /// <summary>
+    /// Routed through the same helper as the notices, so the status line gets the clamped centring
+    /// too - it is the longest string the window draws, and the one most able to walk off the
+    /// left edge.
+    /// </summary>
     private void DrawStatus() => DrawCentredNotice((statusMessage, statusColor));
 
     /// <summary>
@@ -215,10 +219,9 @@ public class MainWindow : Window, IDisposable
         foreach (var (text, _) in runs)
             width += ImGui.CalcTextSize(text).X;
 
-        // Clamped at zero, for the reason UiStyle.DrawPinnedFooter clamps: a line wider than the
-        // window centres to a negative offset, which walks its start off the left edge instead of
-        // letting the end clip. At minimum window width that is the difference between a message
-        // missing its tail and one missing its beginning.
+        // Clamped at zero, as UiStyle.DrawPinnedFooter clamps: a line wider than the window
+        // centres to a negative offset, walking its start off the left edge instead of letting
+        // the end clip.
         ImGui.SetCursorPosX(Math.Max(0, (ImGui.GetContentRegionAvail().X - width) / 2));
 
         for (var i = 0; i < runs.Length; i++)
@@ -240,34 +243,33 @@ public class MainWindow : Window, IDisposable
         if (sharedGroups == null || sharedGroups.Count == 0)
             return;
 
-        // A negative height means "content region avail minus this much", which keeps
-        // the scrolling results area clear of the footer below it.
+        // A negative height means "content region avail minus this much", which keeps the
+        // scrolling results area clear of the footer below it.
         var height = -(footerHeight + ImGui.GetStyle().ItemSpacing.Y);
 
-        // ImRaii.Child ends the child unconditionally - ImGui requires EndChild() even
-        // when BeginChild() returns false (unlike Begin/End on popups and menus).
+        // ImRaii.Child ends the child unconditionally - ImGui requires EndChild() even when
+        // BeginChild() returns false, unlike Begin/End on popups and menus.
         using var child = ImRaii.Child("Results", new Vector2(0, height), false);
         if (!child)
             return;
 
-        // Empty groups are drawn too - a slot whose every match is hidden keeps an inert
-        // header rather than vanishing. See DrawSharedGroup.
+        // Empty groups are drawn too - a slot whose every match is hidden keeps an inert header
+        // rather than vanishing. See DrawInertGroupHeader.
         foreach (var group in sharedGroups)
         {
             DrawSharedGroup(group);
             ImGui.Spacing();
         }
 
-        // Cleared only once headers have actually been drawn, so a login with the window
-        // shut - or with no results yet - still collapses them when they next appear.
+        // Cleared only once headers have actually been drawn, so a login with the window shut, or
+        // with no results yet, still collapses them when they next appear.
         collapseAllOnNextDraw = false;
     }
 
     /// <summary>
-    /// The header's counts: what is on screen, how many distinct models those rows cover, and
-    /// how much of the slot is being held back. The hidden figure is always shown, including
-    /// as a zero - a number that only appears once something is hidden is a number nobody
-    /// thinks to look for.
+    /// The header's counts: what is on screen, how many distinct models those rows cover, and how
+    /// much of the slot is being held back. The hidden figure shows even as a zero - a number that
+    /// only appears once something is hidden is one nobody thinks to look for.
     /// </summary>
     private static string FormatGroupCounts(SharedModelGroup group)
     {
@@ -284,31 +286,30 @@ public class MainWindow : Window, IDisposable
 
     private void DrawSharedGroup(SharedModelGroup group)
     {
-        // Keyed on the slot category alone. Including the item count made the ID change
-        // whenever the dresser did, so ImGui saw a new widget and collapsed it.
+        // Keyed on the slot category alone. Including the item count would change the id whenever
+        // the dresser did, so ImGui would see a new widget and collapse it.
         using var id = ImRaii.PushId(group.SlotCategory);
 
-        // Everything after ### is the ID, everything before it is drawn - so the counts can
-        // change in the label without ImGui treating it as a different header and losing
+        // Everything after ### is the id and everything before it is drawn, so the counts can
+        // change in the label without ImGui treating it as a different header and forgetting
         // whether the user had it expanded.
         var headerText = $"{group.SlotCategory} ({FormatGroupCounts(group)})###header";
 
-        // Claimed here rather than in the branch that uses it, so a reveal that fails to
-        // produce a live section cannot leave the request armed for the next slot to trip on.
+        // Claimed here rather than in the branch that uses it, so a reveal that fails to produce
+        // a live section cannot leave the request armed for the next slot to trip on.
         var expand = expandOnNextDraw == group.SlotCategory;
         if (expand)
             expandOnNextDraw = null;
 
-        // A slot can end up with nothing left to show - hiding one of a pair takes both out.
-        // Dropping the section entirely would make it look as though the slot had never had
-        // any duplicates, so the header stays, greyed, still carrying its counts.
+        // A slot can end up with nothing left to show, since hiding one of a pair takes both out.
+        // Dropping the section would read as "this slot never had duplicates", so the header
+        // stays, greyed, still carrying its counts.
         if (group.Items.Count == 0)
         {
             DrawInertGroupHeader(group, headerText);
             return;
         }
 
-        // Get color based on slot category
         var groupColor = GetColorForSlot(group.SlotCategory);
         ImGui.PushStyleColor(ImGuiCol.Header, groupColor);
         ImGui.PushStyleColor(ImGuiCol.HeaderHovered, groupColor);
@@ -323,8 +324,8 @@ public class MainWindow : Window, IDisposable
         var open = ImGui.CollapsingHeader(headerText);
         ImGui.PopStyleColor(4);
 
-        // Both read ImGui's "last item" state, so they have to come before anything the body
-        // draws - and the tooltip before the popup, which starts a window and replaces it.
+        // Both read ImGui's "last item" state, so they come before anything the body draws - and
+        // the tooltip before the popup, which starts a window and replaces that state.
         DrawGroupTooltip(group);
         DrawGroupContextMenu(group);
 
@@ -334,9 +335,9 @@ public class MainWindow : Window, IDisposable
 
     /// <summary>
     /// A section with nothing left to show. Greyed and forced shut, but still right-clickable:
-    /// revealing what it is holding back is the only way to get the section back, so this is
-    /// the header that needs the menu most. ImRaii.Disabled would have been the tidier way to
-    /// make it inert and would have blocked exactly that.
+    /// revealing what it is holding back is the only way to get the section back, so this is the
+    /// header that needs its menu most. <c>ImRaii.Disabled</c> would be the tidier way to make it
+    /// inert and would block exactly that.
     /// </summary>
     private void DrawInertGroupHeader(SharedModelGroup group, string headerText)
     {
@@ -345,8 +346,8 @@ public class MainWindow : Window, IDisposable
         ImGui.PushStyleColor(ImGuiCol.HeaderActive, UiStyle.InertHeader);
         ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.MutedText);
 
-        // Shut every frame, not just once: left-clicking it can toggle the stored state all it
-        // likes, and it will never open onto the nothing that is behind it.
+        // Shut every frame rather than once: left-clicking may toggle the stored state all it
+        // likes, and it will never open onto the nothing behind it.
         ImGui.SetNextItemOpen(false, ImGuiCond.Always);
         ImGui.CollapsingHeader(headerText);
 
@@ -417,9 +418,9 @@ public class MainWindow : Window, IDisposable
             {
                 plugin.Configuration.SetSlotRevealed(group.SlotCategory, true);
 
-                // Otherwise the section comes back collapsed and the reveal looks like it did
-                // nothing but change a count - and a section that was inert has never been
-                // expanded, so there is no remembered state to fall back on.
+                // A section that was inert has never been expanded, so there is no remembered
+                // state to fall back on - without this it comes back collapsed and the reveal
+                // looks like it did nothing but change a count.
                 expandOnNextDraw = group.SlotCategory;
             }
         }
@@ -428,9 +429,9 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Draws a slot's items as runs of a shared model, bracketing each run with a thin
-    /// vertical bar in the slot's own colour. Items are sorted by model ID when the scan
-    /// builds the group, so a run is always a contiguous span.
+    /// Draws a slot's items as runs of a shared model, bracketing each run with a thin vertical
+    /// bar in the slot's own colour. Items are sorted by model id when the group is built, so a
+    /// run is always a contiguous span.
     /// </summary>
     private void DrawModelRuns(SharedModelGroup group, Vector4 groupColor)
     {
@@ -449,8 +450,8 @@ public class MainWindow : Window, IDisposable
             for (var i = start; i < end; i++)
                 DrawItem(group.Items[i], group.Items);
 
-            // The cursor now sits at the start of the next row, one ItemSpacing below
-            // the run's last row.
+            // The cursor now sits at the start of the next row, one ItemSpacing below the run's
+            // last row.
             var runBottom = ImGui.GetCursorScreenPos().Y - spacing;
             drawList.AddRectFilled(
                 new Vector2(origin.X + 8, origin.Y),
@@ -465,16 +466,12 @@ public class MainWindow : Window, IDisposable
         }
     }
 
-    /// <summary>
-    /// Height of one result row - the icon's size, which is what set the row height before the
-    /// Selectable existed too.
-    /// </summary>
+    /// <summary>Height of one result row - the item icon's size.</summary>
     private const float RowHeight = 32f;
 
-    // The game's own art for the two places an item can live, drawn to the left of the item's
-    // own icon. Furnishing icons rather than font glyphs because the game font has no symbol
-    // for either store, and these are the objects themselves - the same picture the player
-    // clicks on in their house.
+    // The game's own furnishing art for the two places an item can live, drawn left of the item
+    // icon. Furnishings rather than font glyphs because the game font has no symbol for either
+    // store, and these are the objects themselves.
     private const uint GlamourDresserIcon = 51710;
     private const uint ArmoireIcon = 52536;
 
@@ -492,21 +489,19 @@ public class MainWindow : Window, IDisposable
 
         var rowStart = ImGui.GetCursorPos();
 
-        // The row is laid down as a single full-width Selectable first, and the location
-        // glyphs, icon, name, dye circles and tags are then drawn back over it from the same
-        // cursor position.
+        // The row is one full-width Selectable, laid down first, with the glyphs, icon, name, dye
+        // circles and tags drawn back over it from the same cursor position.
         //
-        // This is what the context menu needs: BeginPopupContextItem binds to the *last item
-        // drawn*, and the row used to be several separate widgets - so a menu would have bound
-        // to the trailing Armoire tag alone, and only on the rows that happen to have one. One
-        // item for the whole row also means one hover target, hence one tooltip below instead
-        // of the three that used to hang off the individual pieces.
+        // This is what the context menu needs: BeginPopupContextItem binds to the last item drawn,
+        // so a row made of several widgets binds its menu to the trailing tag alone, and only on
+        // the rows that have one. One item for the whole row also means one hover target, hence
+        // one tooltip rather than one per piece.
         ImGui.PushStyleColor(ImGuiCol.HeaderHovered, UiStyle.RowHover);
         ImGui.PushStyleColor(ImGuiCol.HeaderActive, UiStyle.RowHover);
-        // Keyed on the dresser Slot as well as the item id, because the same item id can now be
-        // on screen twice - an item stored in two dresser groupings is two rows, and so is an
-        // outfit held under two. Two widgets sharing an ImGui id share their hover and their
-        // popup with each other, so right-clicking one would highlight both.
+
+        // Keyed on the dresser Slot as well as the item id, because one item id can be on screen
+        // twice: an item stored in two dresser groupings is two rows, and so is an outfit held
+        // under two. Two widgets sharing an ImGui id share their hover and their popup.
         ImGui.Selectable(
             $"##row{item.ItemId}_{item.Slot}",
             false,
@@ -514,12 +509,12 @@ public class MainWindow : Window, IDisposable
             new Vector2(ImGui.GetContentRegionAvail().X, RowHeight));
         ImGui.PopStyleColor(2);
 
-        // Where the next row belongs. Drawing the contents rewinds the cursor, so it has to
-        // be put back deliberately rather than left wherever the last tag ended up.
+        // Where the next row belongs. Drawing the contents rewinds the cursor, so it has to be put
+        // back deliberately rather than left wherever the last tag ended up.
         var afterRow = ImGui.GetCursorPos();
 
-        // Tooltip before the popup: both read ImGui's "last item" state, and beginning the
-        // popup starts a window, which replaces it.
+        // Tooltip before the popup: both read ImGui's "last item" state, and beginning the popup
+        // starts a window, which replaces it.
         DrawItemTooltip(item, allItemsInSlot);
         DrawItemContextMenu(item);
 
@@ -529,16 +524,15 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// The visible part of a row. Drawn over the Selectable, so nothing in here may be
-    /// interactive - an interactive widget would steal the hover from the row and take the
-    /// context menu with it.
+    /// The visible part of a row, drawn over the Selectable - so nothing in here may be
+    /// interactive, or it would steal the hover from the row and take the context menu with it.
     /// </summary>
     private void DrawItemContents(SharedModelItem item)
     {
         DrawLocationGlyphs(item);
 
-        // Try to get icon. The dresser's own IconId can be one the game cannot resolve for
-        // HQ entries, so fall back to the icon the Item sheet gives for the base item.
+        // The dresser's own IconId can be one the game cannot resolve for an HQ entry, so fall
+        // back to the icon the Item sheet gives for the base item.
         var icon = GetIcon((uint)item.IconId) ?? GetIcon(GetItemIconFromLumina(item.ItemId));
         if (icon != null)
             ImGui.Image(icon.Handle, new Vector2(RowHeight, RowHeight));
@@ -547,24 +541,23 @@ public class MainWindow : Window, IDisposable
 
         ImGui.SameLine();
 
-        // Get display name - fallback if empty. HQ entries carry the game's own HQ glyph,
-        // since the Item sheet name is identical for both qualities.
+        // HQ entries carry the game's own HQ glyph, since the Item sheet name is identical for
+        // both qualities.
         var displayName = string.IsNullOrWhiteSpace(item.Name) ? $"Item #{item.ItemId}" : item.Name;
         if (item.IsHq)
             displayName = $"{displayName} {(char)SeIconChar.HighQuality}";
 
-        // No per-row "shared model" marker: nearly every row is here because it shares a model,
-        // so almost all of them would carry one. The vertical bar down each run is what shows
-        // which rows group together, and a run of one is an item redundant against its own
-        // Armoire copy rather than against a neighbour.
+        // No per-row "shared model" marker: nearly every row is here because it shares a model, so
+        // almost all of them would carry one. The vertical bar down each run is what shows which
+        // rows group together.
         //
-        // A hidden row is only on screen because "show hidden items" is on. Muting the name
-        // says so at a glance, rather than leaving it to the tag at the end of the line.
+        // A hidden row is only on screen because "show hidden items" is on. Muting the name says
+        // so at a glance rather than leaving it to the tag at the end of the line.
         ImGui.PushStyleColor(ImGuiCol.Text, item.IsHidden ? UiStyle.MutedText : UiStyle.BrightWhite);
         ImGui.TextUnformatted(displayName);
         ImGui.PopStyleColor();
 
-        // Draw dye slot indicators (circles) - similar to Glamaholic
+        // One empty circle per dye slot the item has, as Glamaholic draws them.
         if (item.DyeCount > 0)
         {
             ImGui.SameLine();
@@ -574,29 +567,26 @@ public class MainWindow : Window, IDisposable
             var basePos = ImGui.GetCursorScreenPos();
             var circleRadius = 4.0f;
             var circleSpacing = 8.0f;
-            // Use white/light gray for empty circles (visible on dark background)
             var circleColor = ImGui.ColorConvertFloat4ToU32(new Vector4(0.85f, 0.85f, 0.85f, 1.0f));
 
-            // Draw circles for each dye slot (1 or 2)
             for (int i = 0; i < item.DyeCount; i++)
             {
                 var circleCenter = basePos + new Vector2(circleRadius + 2, circleRadius + 2) + new Vector2(i * circleSpacing, 0);
-                // Draw empty circle outline (similar to Glamaholic - empty circles indicate available dye slots)
                 drawList.AddCircle(circleCenter, circleRadius + 1, circleColor);
             }
 
-            // A Dummy, not an InvisibleButton: this only has to reserve the circles' width on
-            // the line now that the row's Selectable owns the hover. Do not advance the cursor
-            // past it by hand - ImGui has already wrapped to the next row, so any SetCursorPosX
-            // here indents the *following* item instead of this one.
+            // A Dummy rather than an InvisibleButton: this only reserves the circles' width, now
+            // that the row's Selectable owns the hover. Do not advance the cursor past it by hand
+            // - ImGui has already wrapped to the next row, so a SetCursorPosX here would indent
+            // the following item instead of this one.
             var circlesWidth = (item.DyeCount * circleSpacing) + 4;
             ImGui.Dummy(new Vector2(circlesWidth, circleRadius * 2 + 4));
         }
 
         // Where the item is now is already said by the glyphs on the left, so this line is only
-        // ever about what to do next - and what to do next changes completely once a second copy
-        // is confirmed, whether that copy is in the Armoire or in the dresser itself. The two
-        // read the same on the row and are told apart in the tooltip.
+        // about what to do next - and that changes completely once a second copy is confirmed,
+        // whether it is in the Armoire or in the dresser itself. The two read the same on the row
+        // and are told apart in the tooltip.
         if (item.IsPerfectDuplicate)
         {
             ImGui.SameLine();
@@ -616,12 +606,12 @@ public class MainWindow : Window, IDisposable
             ImGui.PopStyleColor();
         }
 
-        // Independent of the two Armoire tags above, and free to sit alongside one: where an
-        // item is kept and what it is a piece of are different facts about it. This is the one
-        // tag that says something about the item rather than about what to do with it - losing
-        // a piece breaks up a set, and the row otherwise gives no sign it belongs to one.
+        // Independent of the two Armoire tags above and free to sit alongside one: where an item
+        // is kept and what it is a piece of are different facts. This is the one tag that says
+        // something about the item rather than about what to do with it - losing a piece breaks up
+        // a set, and the row otherwise gives no sign it belongs to one.
         //
-        // Checked at draw time, not at build time: the tag is the only thing the setting
+        // Checked at draw time rather than at build time: the tag is the only thing the setting
         // governs, so turning it off has nothing to rebuild and the tooltip keeps saying it.
         if (item.Outfits.Count > 0 && plugin.Configuration.TagOutfitComponents)
         {
@@ -645,14 +635,13 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Where the item lives, as up to two pieces of the game's own furniture art ahead of the
+    /// Where the item lives, as up to two pieces of the game's own furnishing art ahead of the
     /// item icon.
     ///
-    /// Both slots are laid out at fixed positions and an absent one is left blank rather than
-    /// closed up, so the column reads down the list: left slot means Glamour Dresser, right
-    /// slot means Armoire, both filled means both. Position is what carries the meaning - the
-    /// two icons are similar enough at this size that an item that shifted left when the other
-    /// was missing would be unreadable.
+    /// Both slots sit at fixed positions and an absent one is left blank rather than closed up:
+    /// left means Glamour Dresser, right means Armoire, both filled means both. Position is what
+    /// carries the meaning - the two icons are similar enough at this size that a glyph shifting
+    /// left when the other was missing would be unreadable.
     /// </summary>
     private void DrawLocationGlyphs(SharedModelItem item)
     {
@@ -662,9 +651,9 @@ public class MainWindow : Window, IDisposable
         DrawLocationGlyph(new Vector2(start.X, top), GlamourDresserIcon, item.InDresser);
         DrawLocationGlyph(new Vector2(start.X + LocationGlyphSize + LocationGlyphGap, top), ArmoireIcon, item.InArmoire);
 
-        // Back to the row's own top-left, advanced past the column. Every ImGui.Image above
-        // moved the cursor to wherever it finished, and the item icon has to start from a
-        // position that does not depend on which glyphs happened to be drawn.
+        // Back to the row's top-left, advanced past the column. Each ImGui.Image above left the
+        // cursor wherever it finished, and the item icon has to start from a position that does
+        // not depend on which glyphs were drawn.
         ImGui.SetCursorPos(new Vector2(start.X + LocationColumnWidth, start.Y));
     }
 
@@ -699,9 +688,8 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// One tooltip for the whole row. The dye-slot and Armoire notes used to hang off their
-    /// own widgets; with the row a single item they have nowhere else to live, and gathering
-    /// them means the row explains itself in one hover rather than three.
+    /// One tooltip for the whole row. With the row a single ImGui item there is only one hover
+    /// target, so everything the row has to explain is gathered here.
     /// </summary>
     private void DrawItemTooltip(SharedModelItem item, List<SharedModelItem> allItemsInSlot)
     {
@@ -712,8 +700,8 @@ public class MainWindow : Window, IDisposable
 
         ImGui.BeginTooltip();
 
-        // An outfit row is not here for its model - a bundle has none - but because the dresser
-        // is holding the same outfit under more than one grouping, which is what its run counts.
+        // An outfit row is not here for its model - a bundle has none - but because the dresser is
+        // holding the same outfit under more than one grouping, which is what its run counts.
         if (item.IsOutfit)
         {
             ImGui.TextUnformatted($"Outfit: {item.ModelId}");
@@ -725,8 +713,8 @@ public class MainWindow : Window, IDisposable
         }
         else
         {
-            // A run of one is an item redundant against its own Armoire copy, not against a
-            // neighbour - "1 items match model" would be both ungrammatical and beside the point.
+            // A run of one is an item redundant against its own second copy rather than against a
+            // neighbour, so it does not claim a match.
             ImGui.TextUnformatted(matchingModelCount > 1
                 ? $"{matchingModelCount} items match model: {item.ModelId}"
                 : $"Model: {item.ModelId}");
@@ -742,16 +730,16 @@ public class MainWindow : Window, IDisposable
             ImGui.PopStyleColor();
         }
 
-        // Named rather than merely flagged: which set this copy hangs off is the whole reason the
-        // tag is worth having.
+        // Named rather than merely flagged: which set this copy hangs off is the reason the tag is
+        // worth having.
         if (item.Outfits.Count > 0)
             ImGui.TextUnformatted($"Part of {string.Join(", ", item.Outfits)}");
 
         if (item.DyeCount > 0)
             ImGui.TextUnformatted($"{item.DyeCount} dye slot{(item.DyeCount > 1 ? "s" : "")} available");
 
-        // Two different pieces of advice, and which one applies turns on whether a copy is
-        // already in the Armoire - so they are never both true at once.
+        // Two pieces of advice, and which applies turns on whether a copy is already in the
+        // Armoire - so they are never both true at once.
         if (item.InDresser && item.InArmoire)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.Attention);
@@ -775,10 +763,12 @@ public class MainWindow : Window, IDisposable
         ImGui.EndTooltip();
     }
 
+    /// <summary>
+    /// Raw ImGui rather than ImRaii: EndPopup must be called only when Begin returned true, which
+    /// is the opposite of the child/table rule ImRaii exists to handle.
+    /// </summary>
     private void DrawItemContextMenu(SharedModelItem item)
     {
-        // Raw ImGui rather than ImRaii: EndPopup must be called only when Begin returned
-        // true, which is the opposite of the child/table rule ImRaii exists to handle.
         if (!ImGui.BeginPopupContextItem($"##rowctx{item.ItemId}_{item.Slot}"))
             return;
 
@@ -802,27 +792,27 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// GetFromGameIcon throws IconNotFoundException for an icon the game does not have, so
-    /// GetWrapOrDefault never gets the chance to return null. An unresolvable icon must not
-    /// take the whole window's Draw() down with it - DrawItem falls back to a blank space.
+    /// One icon, or null if the game cannot resolve it. <c>GetFromGameIcon</c> throws
+    /// <c>IconNotFoundException</c> for an icon the game does not have, so <c>GetWrapOrDefault</c>
+    /// never gets the chance to return null - and an unresolvable icon must not take the window's
+    /// whole Draw() down with it.
     ///
-    /// Takes a uint, deliberately. The id used to be cast to ushort at the call site, which
-    /// meant an out-of-range value wrapped into a valid but unrelated icon instead of
-    /// failing.
+    /// Takes a uint deliberately: narrowing an id that came out of the dresser does not fail, it
+    /// wraps, silently producing a valid but unrelated icon.
     /// </summary>
     private IDalamudTextureWrap? GetIcon(uint id)
     {
         if (id == 0)
             return null;
 
-        // The dresser offsets an HQ entry's icon by 1,000,000, exactly as it offsets its item
-        // id. Asking for the HQ variant of the base icon gets the game's own HQ treatment 
-        // rather than a near-miss.
+        // The dresser offsets an HQ entry's icon by 1,000,000, exactly as it offsets its item id.
+        // Asking for the HQ variant of the base icon gets the game's own HQ treatment rather than
+        // a near-miss.
         var isHq = id >= 1_000_000;
         var iconId = isHq ? id - 1_000_000 : id;
 
-        // Anything still out of range is not an icon this can resolve. Return null rather
-        // than truncating, so the caller's fallback runs.
+        // Anything still out of range is not an icon this can resolve. Null rather than truncated,
+        // so the caller's fallback runs.
         if (iconId > ushort.MaxValue)
             return null;
 
@@ -840,9 +830,9 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Rebuilds the grouped results from the cache, whenever the cache changes underneath
-    /// the window. Opening the dresser, changing its view, depositing or retrieving, and
-    /// loading a character's saved copy all land here - there is nothing for a user to press.
+    /// Rebuilds the grouped results whenever a cache changes underneath the window. Opening the
+    /// dresser, changing its view, depositing or retrieving, and loading a character's saved copy
+    /// all land here - there is nothing for a user to press.
     /// </summary>
     private void BuildGroups()
     {
@@ -850,9 +840,8 @@ public class MainWindow : Window, IDisposable
         lastArmoireGeneration = ArmoireScanner.Generation;
         lastConfigRevision = Configuration.Revision;
 
-        // Dropped rather than kept between builds. A rebuild happens because something changed,
-        // and one of the things that can change is the recolour setting the model answer depends
-        // on - so carrying answers across a rebuild is precisely what must not happen.
+        // Dropped rather than carried between builds: a rebuild happens because something changed,
+        // and one of those things is the recolour setting the model answer depends on.
         slotNameCache.Clear();
         modelIdCache.Clear();
 
@@ -872,19 +861,16 @@ public class MainWindow : Window, IDisposable
                 return;
             }
 
-            // Outfit bundles ("... Attire") have no equipment slot of their own, so they can't be
+            // Outfit bundles ("... Attire") have no equipment slot of their own, so they cannot be
             // model-matched against garments. They get their own section, matched on the outfit's
             // name, and are taken from the raw dresser list rather than from uniqueItems: a
-            // grouping is a dresser-only idea, and this keeps the Armoire - which has no Slot to
-            // speak of and gets 0 - out of a question it cannot answer.
+            // grouping is a dresser-only idea, and an Armoire row has no Slot to answer with.
             //
-            // Deduplicated on (ItemId, Slot) rather than taken as they come. Slot is the id of
-            // the dresser's own grouping, so one outfit at one Slot is one grouping however many
-            // times the array happens to list it - and removing a piece from an outfit leaves
-            // the game repeating that outfit's entry, three times over in the case measured.
-            // Counting rows instead would report those repeats as duplicated outfits, which is
-            // the one thing this section is meant to be able to tell you. Two genuine groupings
-            // are two Slots, which survives this untouched.
+            // Deduplicated on (ItemId, Slot). Slot is the id of the dresser's own grouping, so one
+            // outfit at one Slot is one grouping however many times the array lists it - removing
+            // a piece from an outfit leaves the game repeating that outfit's entry, and counting
+            // rows would report those repeats as duplicated outfits. Two genuine groupings are two
+            // Slots, which survives this untouched.
             var outfitEntries = dresserItems
                 .Where(item => GetSlotName(item.ItemId) == OutfitCategory)
                 .DistinctBy(item => (item.ItemId, item.Slot))
@@ -894,7 +880,8 @@ public class MainWindow : Window, IDisposable
             // unattached second copy of the same item sitting in a grouping of its own.
             var outfitsBySlot = BuildOutfitsBySlot(outfitEntries);
 
-            // Filter out items with unknown slots
+            // Only items with a real equipment slot can be model-matched. Outfits are excluded
+            // here because they are handled as their own section.
             var validItems = uniqueItems
                 .Where(item => {
                     var slotName = GetSlotName(item.ItemId);
@@ -902,17 +889,15 @@ public class MainWindow : Window, IDisposable
                 })
                 .ToList();
 
-            // Hidden items come out BEFORE the shared-model test below, not after it. Hiding
-            // one half of a pair has to take the other half with it: the survivor is no longer
-            // redundant with anything, and leaving it on screen as a run of one would be a lie
-            // about what the plugin found.
+            // Hidden items come out before the shared-model test below, never after it. Hiding one
+            // half of a pair has to take the other half with it: the survivor is no longer
+            // redundant with anything, and a run of one would be a lie about what was found.
             //
             // "Show hidden items" switches the filter off wholesale rather than appending the
-            // hidden rows back on, so what is on screen is exactly the unfiltered picture with
-            // the hidden ones tagged - and unhiding one changes nothing but its tag.
-            // The filter is per slot, not global: a section header's right-click reveals just
-            // that section, and the settings toggle is the same switch thrown for all of them
-            // at once. ShowsHiddenIn answers both.
+            // hidden rows back on, so what is on screen is the unfiltered picture with the hidden
+            // ones tagged. The filter is per slot rather than global - a section header's
+            // right-click reveals just that section, and the settings toggle is the same switch
+            // thrown for all of them at once. ShowsHiddenIn answers both.
             var hiddenCount = validItems.Count(item => plugin.Configuration.IsHidden(item.ItemId));
             var visibleItems = validItems
                 .Where(item => !plugin.Configuration.IsHidden(item.ItemId)
@@ -933,14 +918,11 @@ public class MainWindow : Window, IDisposable
             foreach (var g in uniqueItems.GroupBy(i => GetSlotName(i.ItemId)).OrderBy(g => GetSlotOrder(g.Key)))
                 Plugin.Log.Debug($"Scan category {g.Key}: {g.Count()}");
 
-            // Identify the redundant items by grouping on slot + model.
-            //
-            // Two ways in. The first is the original one: more than one item resolving to the
-            // same appearance. The second is an item held in the dresser AND the Armoire, which
-            // is redundant against its own Armoire copy and needs nothing else to match - the
-            // dresser slot is being spent on something already stored for free. Without this it
-            // would only ever appear by coincidence, when some unrelated item happened to share
-            // its mesh, which is the most actionable finding here going missing at random.
+            // The redundant items, grouped on slot plus model. Two ways in: more than one item
+            // resolving to the same appearance, or an item held in the dresser and the Armoire at
+            // once. The second needs nothing else to match - the dresser slot is being spent on
+            // something already stored for free - and without the clause it would only ever
+            // surface by coincidence, when an unrelated item happened to share its mesh.
             var itemsWithSharedModels = visibleItems
                 .GroupBy(item => {
                     var slotName = GetSlotName(item.ItemId);
@@ -948,36 +930,31 @@ public class MainWindow : Window, IDisposable
                     return $"{slotName}-{modelId}";
                 })
                 .Where(g => g.Count() > 1 || g.Any(item => item.InDresser && item.InArmoire))
-                .SelectMany(g => g) // Flatten back to individual items
+                .SelectMany(g => g)
                 .ToList();
 
-            // Now group by slot category only
             var grouped = itemsWithSharedModels
                 .GroupBy(item => GetSlotName(item.ItemId))
                 .Select(g => {
-                    // Sort items within this slot by model ID so matching models are adjacent,
-                    // and put the HQ entry at the head of its run.
+                    // Sorted by model id so matching models are adjacent, with the HQ entry at the
+                    // head of its run.
                     var sortedItems = g
                         .OrderBy(item => GetItemModel(item.ItemId))
                         .ThenByDescending(item => item.ItemId >= 1_000_000)
                         .Select(item => {
-                            // Always get item name from Lumina for accuracy
-                            // Dresser name can be incorrect/outdated when dresser updates
+                            // The name always comes from the Item sheet - the dresser's own copy
+                            // can be stale.
                             var itemName = GetItemNameFromLumina(item.ItemId);
-                            
-                            // Get icon - use from Lumina if dresser icon is invalid
+
                             var iconId = item.IconId;
                             if (iconId == 0)
                             {
                                 iconId = GetItemIconFromLumina(item.ItemId);
                             }
-                            
-                            // Get dye count from Lumina
+
                             var dyeCount = GetItemDyeCount(item.ItemId);
-                            
-                            // Check if item can be stored in Armoire
                             var canGoInArmoire = CanGoInArmoire(item.ItemId);
-                            
+
                             return new SharedModelItem
                             {
                                 Name = itemName,
@@ -990,7 +967,7 @@ public class MainWindow : Window, IDisposable
                                 InDresser = item.InDresser,
                                 InArmoire = item.InArmoire,
                                 IsHq = item.ItemId >= 1_000_000,
-                                // Only ever true while ShowHiddenItems is on - otherwise a
+                                // Only ever true while hidden items are being shown - otherwise a
                                 // hidden item never reaches this far.
                                 IsHidden = plugin.Configuration.IsHidden(item.ItemId),
                                 DresserCopies = item.DresserCopies,
@@ -1001,19 +978,19 @@ public class MainWindow : Window, IDisposable
                     
                     return new SharedModelGroup
                     {
-                        ModelId = "", // Not used for slot-based grouping
+                        ModelId = "",
                         SlotCategory = g.Key,
                         Items = sortedItems,
                         ModelCount = sortedItems.Select(i => i.ModelId).Distinct().Count(),
                         HiddenCount = hiddenBySlot.GetValueOrDefault(g.Key)
                     };
                 })
-                .OrderBy(g => GetSlotOrder(g.SlotCategory)) // Sort slots in logical order
+                .OrderBy(g => GetSlotOrder(g.SlotCategory))
                 .ToList();
 
-            // A slot can hide its way down to nothing - hiding one of a pair drops both, and
-            // that was the slot's only match. It still gets a header, so the section reports
-            // what became of it instead of disappearing. DrawSharedGroup draws these inert.
+            // A slot can hide its way down to nothing, when hiding one of a pair drops both and
+            // that was the slot's only match. It still gets a header, so the section reports what
+            // became of it instead of disappearing; DrawInertGroupHeader draws these.
             var emptied = hiddenBySlot
                 .Where(entry => !grouped.Any(g => g.SlotCategory == entry.Key))
                 .Select(entry => new SharedModelGroup
@@ -1034,37 +1011,36 @@ public class MainWindow : Window, IDisposable
 
             sharedGroups = grouped;
             var totalItems = grouped.Sum(g => g.Items.Count);
-            // Only the categories that actually have something in them. The emptied ones above
-            // are on screen to explain themselves, not because they are a result.
+
+            // Only the categories with something in them. The emptied ones are on screen to
+            // explain themselves rather than because they are a result.
             var categoryCount = grouped.Count(g => g.Items.Count > 0);
+
             // "Redundant" rather than "with shared models": most are, but the ones held in both
             // stores are here on their own account and the headline should not misdescribe them.
             statusMessage = $"Found {totalItems} redundant items across {categoryCount} slot categories!";
             statusColor = UiStyle.BrightWhite;
 
-            // Called out separately from the total because it is the one number that is
-            // actionable without any comparing: a second copy, in the Armoire or in the dresser
-            // itself, is a dresser slot spent on nothing.
-            //
-            // Counted off the same property the tag is drawn from, so the headline and the rows
-            // can never disagree about what a perfect duplicate is.
+            // Called out separately because it is the one number actionable without any comparing:
+            // a second copy, in the Armoire or in the dresser itself, is a slot spent on nothing.
+            // Counted off the same property the row tag is drawn from, so the headline and the
+            // rows cannot disagree about what a perfect duplicate is.
             var perfectDuplicates = grouped.Sum(g => g.Items.Count(i => i.IsPerfectDuplicate));
             if (perfectDuplicates > 0)
                 statusMessage += $" {perfectDuplicates} perfect duplicate{(perfectDuplicates == 1 ? "" : "s")}.";
 
-            // Hidden items are silent by design, which is exactly why the count has to be
-            // stated somewhere - otherwise a result that shrank months ago has no explanation
-            // on screen at all. Whether any of them are currently revealed is a per-section
-            // question, and the section headers answer it.
-            // Outfits are hidden through the same menu and have to be in the same total, or
-            // hiding one would take rows off the screen without changing any number on it.
+            // Hiding is silent by design, which is why the count has to be stated somewhere -
+            // otherwise a result that shrank has no explanation on screen at all. Whether any of
+            // them are currently revealed is a per-section question the headers answer.
+            //
+            // Outfits are hidden through the same menu and belong in the same total, or hiding one
+            // would take rows off the screen without changing a number on it.
             var totalHidden = hiddenCount + (outfitGroup?.HiddenCount ?? 0);
             if (totalHidden > 0)
                 statusMessage += $" ({totalHidden} hidden)";
 
-            // Kept because this runs on the draw path and that is a known compromise. Measured
-            // at 2ms for 1636 items once warm; the first build of a session costs about 25ms
-            // regardless of size, which is Excel pages and JIT rather than the work itself.
+            // Logged because this runs on the draw path, which is an accepted compromise - the
+            // figure to watch is the warm one, not the first build of a session.
             Plugin.Log.Debug($"Build took {buildTimer.Elapsed.TotalMilliseconds:F1} ms for {uniqueItems.Count} items");
         }
         catch (Exception ex)
@@ -1083,11 +1059,11 @@ public class MainWindow : Window, IDisposable
     /// linked to it, so this adds no items to the pool. It answers a different question - whether
     /// the row in front of you is linked to a set you have - which nothing else on the row says.
     ///
-    /// Keyed on Slot, not on item id, and that is the whole point. Being linked to an outfit is a
-    /// property of the <i>copy</i>, not of the item: The Emperor's New Hat is linked to its attire
-    /// at Slot 27 while a second copy stands alone at Slot 706, and an id-keyed answer tagged both.
-    /// It also settles the pieces belonging to two sets - 471 of them - which an id-keyed answer
-    /// had to name both owners of; the Slot says which grouping this copy actually hangs off.
+    /// Keyed on Slot rather than on item id, and that is the point. Being linked to an outfit is a
+    /// property of the <i>copy</i>: a piece can be part of a set while a second copy of the same
+    /// item stands alone, and an id-keyed answer tags both. It also settles the pieces belonging
+    /// to two sets, which an id-keyed answer has to name both owners of - the Slot says which
+    /// grouping this copy actually hangs off.
     /// </summary>
     private Dictionary<uint, (uint SetId, string Name)> BuildOutfitsBySlot(List<PrismBoxItem> outfitEntries)
     {
@@ -1097,9 +1073,8 @@ public class MainWindow : Window, IDisposable
         {
             var setId = BaseItemId(entry.ItemId);
 
-            // TryAdd rather than an assignment: no Slot has ever been seen holding two bundles,
-            // and if one ever did, the first is as good an answer as the second and neither is
-            // worth throwing over.
+            // TryAdd rather than an assignment: a Slot is not expected to hold two bundles, and if
+            // one did, the first is as good an answer as the second.
             bySlot.TryAdd(entry.Slot, (setId, GetItemNameFromLumina(setId)));
         }
 
@@ -1112,8 +1087,8 @@ public class MainWindow : Window, IDisposable
     /// </summary>
     private static List<string> OutfitsFor(ItemEntry item, Dictionary<uint, (uint SetId, string Name)> outfitsBySlot)
     {
-        // An Armoire-only entry has no dresser Slot and carries 0, which is a real Slot in the
-        // dresser - nothing links the two, so it must not be looked up as though it did.
+        // An Armoire-only entry carries Slot 0, which is a real dresser Slot - nothing links the
+        // two, so it must not be looked up as though it did.
         if (!item.InDresser)
             return [];
 
@@ -1142,8 +1117,8 @@ public class MainWindow : Window, IDisposable
     private SharedModelGroup? BuildOutfitGroup(List<PrismBoxItem> outfitEntries, HashSet<uint> storedInArmoire)
     {
         // Same rule as every other section: hidden entries come out before the count test, so
-        // hiding one half of a duplicated pair takes the other half with it rather than leaving
-        // a run of one claiming to be a duplicate.
+        // hiding one half of a duplicated pair takes the other half with it rather than leaving a
+        // run of one claiming to be a duplicate.
         var revealed = plugin.Configuration.ShowsHiddenIn(OutfitCategory);
         var hiddenCount = outfitEntries.Count(entry => plugin.Configuration.IsHidden(entry.ItemId));
 
@@ -1171,9 +1146,8 @@ public class MainWindow : Window, IDisposable
             }))
             .ToList();
 
-        // No section at all unless there is something to say. A slot that has hidden its only
-        // match still gets a header, greyed, so the reveal has something to right-click - the
-        // same reason DrawSharedGroup keeps emptied sections.
+        // No section at all unless there is something to say. One that has hidden its only match
+        // still gets a header, greyed, so the reveal has something to right-click.
         if (items.Count == 0 && hiddenCount == 0)
             return null;
 
@@ -1186,9 +1160,7 @@ public class MainWindow : Window, IDisposable
         };
     }
 
-    /// <summary>
-    /// One candidate for matching, and which of the two stores it came out of.
-    /// </summary>
+    /// <summary>One candidate for matching, and which of the two stores it came out of.</summary>
     private sealed record ItemEntry(
         uint ItemId,
         uint IconId,
@@ -1201,29 +1173,25 @@ public class MainWindow : Window, IDisposable
     /// Folds the Glamour Dresser and the Armoire into one pool, one entry per dresser copy.
     ///
     /// The stores are merged rather than matched separately because a redundant glamour is
-    /// redundant wherever the two copies happen to sit - an Armoire piece and a dresser piece
-    /// that share a mesh are exactly the case worth knowing about, and it was invisible while
-    /// only the dresser was read.
+    /// redundant wherever the two copies sit - an Armoire piece and a dresser piece sharing a mesh
+    /// is exactly the case worth knowing about.
     ///
-    /// An item held in both <i>stores</i> is one entry with both flags set, not two rows. It is
-    /// one item as far as the player is concerned, and splitting it would double-count it in the
-    /// header counts and pad every run it appears in. An item held twice in the <i>dresser</i> is
-    /// the opposite case and stays two rows: there really are two of them, costing a slot each.
+    /// An item held in both <i>stores</i> is one entry with both flags set rather than two rows:
+    /// it is one item as far as the player is concerned, and splitting it would double-count it in
+    /// the header counts and pad every run it appears in. An item held twice in the <i>dresser</i>
+    /// is the opposite case and stays two rows, because there really are two of them.
     /// </summary>
     private static List<ItemEntry> MergeStores(List<PrismBoxItem> dresserItems, HashSet<uint> armoireItemIds)
     {
-        // Keyed on the item AND the dresser grouping it sits in, so one item stored twice stays
-        // two entries. Keying on ItemId alone silently swallowed the strongest finding the
-        // plugin can make: The Emperor's New Hat linked to its outfit at Slot 27 and a second
-        // copy standing alone at Slot 706 is two dresser slots spent on one appearance, and it
-        // collapsed to a single row that then matched nothing.
+        // Keyed on the item and the dresser grouping it sits in, so one item stored twice stays
+        // two entries. Keying on ItemId alone collapses them into a row that then matches nothing,
+        // silently discarding the strongest finding the plugin can make.
         //
-        // Slot is the id of the dresser's grouping, not a storage position - a bundle and its
-        // pieces all share one - so this is not "one entry per position". It is the narrowest
-        // key that keeps two copies apart: the game lists a piece once even when it belongs to
-        // two outfits the player owns, so a second row under a second Slot is a second copy.
-        // Repeats of one (ItemId, Slot) are not: removing a piece from an outfit leaves the
-        // array repeating that outfit's own entry, so those collapse here as before.
+        // Slot is the id of the dresser's grouping rather than a storage position - a bundle and
+        // its pieces all share one - so this is not "one entry per position". It is the narrowest
+        // key that keeps two copies apart: the game lists a piece once even when it belongs to two
+        // outfits the player owns, so a second row under a second Slot is a second copy. Repeats
+        // of one (ItemId, Slot) are not, and still collapse here.
         var dresserEntries = new Dictionary<(uint ItemId, uint Slot), ItemEntry>();
 
         foreach (var item in dresserItems)
@@ -1232,10 +1200,9 @@ public class MainWindow : Window, IDisposable
             if (dresserEntries.ContainsKey(key))
                 continue;
 
-            // The dresser holds HQ entries at ItemId + 1,000,000 while the Armoire only ever
-            // holds base ids, so this membership test is on the raw id deliberately: an HQ
-            // dresser entry never claims the NQ Armoire copy as its own, which is right - they
-            // are two different things and the game shows them as two.
+            // The dresser holds HQ entries at ItemId + 1,000,000 while the Armoire only ever holds
+            // base ids, so the membership test is on the raw id deliberately: an HQ dresser entry
+            // never claims the NQ Armoire copy as its own, and the game shows them as two things.
             dresserEntries[key] = new ItemEntry(
                 item.ItemId,
                 item.IconId,
@@ -1260,24 +1227,23 @@ public class MainWindow : Window, IDisposable
             if (copies.ContainsKey(itemId))
                 continue;
 
-            // Nothing but the id comes out of the Armoire - no icon, no stains, no slot. The
-            // icon is filled in from the Item sheet downstream, exactly as it already is for a
-            // dresser entry whose own IconId is unusable.
+            // Nothing but the id comes out of the Armoire - no icon, no stains, no slot. The icon
+            // is filled in from the Item sheet downstream, as it already is for a dresser entry
+            // whose own IconId is unusable.
             merged.Add(new ItemEntry(itemId, 0, 0, InDresser: false, InArmoire: true, DresserCopies: 0));
         }
 
         return merged;
     }
 
-    // Both of these are asked the same question about the same item several times over during
-    // one build - the slot six times, the model three - and each answer costs an Excel row
-    // fetch. Memoised for the duration of a build rather than restructured, because the call
-    // sites are spread across a LINQ pipeline where threading a precomputed value through would
-    // cost more clarity than it buys.
+    // Both are asked the same question about the same item several times during one build, and
+    // each answer costs an Excel row fetch. Memoised for the duration of a build rather than
+    // restructured, because the call sites are spread across a LINQ pipeline where threading a
+    // precomputed value through would cost more clarity than it buys.
     //
-    // Cleared at the top of BuildGroups, which is what keeps them honest: the model answer
-    // depends on the recolour setting, and a setting change is itself what triggers a rebuild.
-    // Draw runs on the framework thread only, so neither needs locking.
+    // Cleared at the top of BuildGroups, which is what keeps them honest: the model answer depends
+    // on the recolour setting, and a setting change is itself what triggers a rebuild. Draw runs
+    // on the framework thread only, so neither needs locking.
     private readonly Dictionary<uint, string> slotNameCache = [];
     private readonly Dictionary<uint, string> modelIdCache = [];
 
@@ -1300,10 +1266,11 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// The dresser stores HQ entries at ItemId + 1,000,000, but the Item sheet only holds the
-    /// base row - so every HQ item failed to resolve and fell through to "Unknown Slot".
-    /// Only sheet lookups are normalised; the raw ItemId stays the dedup identity, so an HQ
-    /// item and its NQ twin remain two dresser entries, which is what the game shows.
+    /// The dresser stores HQ entries at ItemId + 1,000,000 while the Item sheet only holds the
+    /// base row, so every sheet lookup has to be normalised or an HQ item resolves to nothing.
+    ///
+    /// Only sheet lookups: the raw ItemId stays the dedup identity, so an HQ item and its NQ twin
+    /// remain two dresser entries, which is what the game shows.
     /// </summary>
     private static uint BaseItemId(uint itemId)
         => itemId >= 1_000_000 ? itemId - 1_000_000 : itemId;
@@ -1328,14 +1295,14 @@ public class MainWindow : Window, IDisposable
         if (!item.EquipSlotCategory.IsValid)
             return "Unknown Slot";
 
-        // Outfit bundles point at EquipSlotCategory row 0, where every slot field is zero.
-        // They are real dresser entries ("Bunny Attire", "The Emperor's New Attire"), not junk.
+        // Outfit bundles point at EquipSlotCategory row 0, where every slot field is zero. They
+        // are real dresser entries rather than junk.
         if (item.EquipSlotCategory.RowId == 0)
             return "Outfit";
 
         var category = item.EquipSlotCategory.Value;
 
-        // Check each slot category in priority order
+        // First slot the category fills wins - a garment only ever fills one.
         if (category.MainHand > 0) return "Main Hand";
         if (category.OffHand > 0) return "Off Hand";
         if (category.Head > 0) return "Head";
@@ -1387,16 +1354,19 @@ public class MainWindow : Window, IDisposable
         return item.DyeCount;
     }
 
+    /// <summary>Every item the Cabinet sheet says is Armoire-eligible. Built once.</summary>
     private static HashSet<uint>? armoireItemIds;
 
+    /// <summary>
+    /// Whether the Armoire will take this item at all - a sheet fact, independent of whether it
+    /// is in there. A set rather than a linear scan because this runs per item, and the results
+    /// rebuild themselves as the dresser changes.
+    /// </summary>
     private bool CanGoInArmoire(uint itemId)
     {
         if (itemId == 0)
             return false;
 
-        // Built once. This runs per item, and a linear Any() over the Cabinet sheet made a
-        // rebuild cost items x cabinet rows - tolerable when only the Scan button triggered
-        // it, not when the results rebuild themselves as the dresser changes.
         armoireItemIds ??= Plugin.DataManager.GetExcelSheet<Cabinet>()!
             .Select(row => row.Item.RowId)
             .ToHashSet();
@@ -1404,9 +1374,9 @@ public class MainWindow : Window, IDisposable
         return armoireItemIds.Contains(BaseItemId(itemId));
     }
 
+    /// <summary>Sort key for the sections, head to foot and then accessories, with Outfit last.</summary>
     private int GetSlotOrder(string slotName)
     {
-        // Return order value for slot sorting (lower = appears first)
         return slotName switch
         {
             "Main Hand" => 1,
@@ -1425,38 +1395,38 @@ public class MainWindow : Window, IDisposable
         };
     }
 
+    /// <summary>
+    /// One colour per family of slots, so a section is identifiable before its label is read.
+    /// Outfits sit outside the three, being a grouping the dresser lays over the slots rather
+    /// than another slot.
+    /// </summary>
     private Vector4 GetColorForSlot(string slotName)
     {
-        // Outfits are a grouping the dresser lays over the equipment slots rather than another
-        // slot, so they get a colour outside the three the slots share.
         if (slotName == OutfitCategory)
         {
             return UiStyle.OutfitAccent;
         }
 
-        // Accessories - purple
         if (slotName == "Ears" || slotName == "Neck" || slotName == "Wrists" || slotName == "Ring")
         {
             return UiStyle.LightPurple;
         }
-        
-        // Main gear - pink/magenta
+
         if (slotName == "Head" || slotName == "Body" || slotName == "Gloves" || slotName == "Legs" || slotName == "Feet")
         {
             return UiStyle.LightMagenta;
         }
-        
-        // Weapons - minty green
+
         if (slotName == "Main Hand" || slotName == "Off Hand")
         {
             return UiStyle.LightMintGreen;
         }
-        
-        // Default to purple if unknown
+
         return UiStyle.LightPurple;
     }
 }
 
+/// <summary>One section of the results: a slot category and the rows filed under it.</summary>
 public class SharedModelGroup
 {
     public string ModelId { get; set; } = string.Empty;
@@ -1470,6 +1440,7 @@ public class SharedModelGroup
     public int HiddenCount { get; set; }
 }
 
+/// <summary>One row of the results.</summary>
 public class SharedModelItem
 {
     public string Name { get; set; } = string.Empty;
@@ -1510,12 +1481,12 @@ public class SharedModelItem
     public int DresserCopies { get; set; }
 
     /// <summary>
-    /// A dresser slot spent on something already held - the strongest finding here, and true
-    /// without comparing the item to anything else.
+    /// A dresser slot spent on something already held - true without comparing the item to
+    /// anything else.
     ///
     /// Two ways to be one, deliberately under a single name: a copy in the Armoire, which stores
     /// it for free, or a second copy in the dresser itself. What the player does about it is the
-    /// same in both cases, and telling them apart is what the row's tooltip is for.
+    /// same either way, and telling them apart is what the row's tooltip is for.
     /// </summary>
     public bool IsPerfectDuplicate => (InDresser && InArmoire) || DresserCopies > 1;
 

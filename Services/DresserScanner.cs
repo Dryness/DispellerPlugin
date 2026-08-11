@@ -8,6 +8,9 @@ using System.Threading;
 
 namespace Dispeller.Services;
 
+/// <summary>
+/// What the character is holding in their Glamour Dresser, cached and persisted per character.
+/// </summary>
 public class DresserScanner : IDisposable
 {
     private static readonly object LockObject = new();
@@ -20,32 +23,36 @@ public class DresserScanner : IDisposable
     private static DateTimeOffset _savedAt;
 
     /// <summary>
-    /// True when what is cached came off disk and has not been confirmed against the game
-    /// this session. It can be out of date - the dresser may have been used elsewhere, or
-    /// changed while the plugin was disabled - so the window says so.
+    /// True when the cached contents came off disk and have not been confirmed against the game
+    /// this session. The dresser may have been used elsewhere, or changed while the plugin was
+    /// disabled, so the window says so.
     /// </summary>
     public static bool IsFromSavedCache => _fromSavedCache;
 
     /// <summary>When the cache on disk was written. Only meaningful while <see cref="IsFromSavedCache"/>.</summary>
     public static DateTimeOffset SavedAt => _savedAt;
 
-    // The cache is written to disk per character so the dresser doesn't have to be reopened
-    // every session. LocalContentId is the character's own id, which is what makes the file
-    // safe to reuse - the Glamour Dresser belongs to the character, not the account.
+    /// <summary>
+    /// The cache is written per character so the dresser need not be reopened every session.
+    /// Keyed on content id, which is what makes the file safe to reuse - the Glamour Dresser
+    /// belongs to the character rather than to the account.
+    /// </summary>
     private const int CacheFormatVersion = 1;
 
     /// <summary>
-    /// Bumped every time the cached contents actually change. The window watches this so it
-    /// can rebuild its results when the dresser is opened, re-sorted, or deposited into.
+    /// Bumped every time the cached contents actually change. The window watches this so it can
+    /// rebuild when the dresser is opened, re-sorted, or deposited into.
     /// </summary>
     public static int Generation => Volatile.Read(ref _generation);
 
-    // The dresser is re-read on a timer rather than on a change signal, because the game
-    // gives us nothing reliable to watch. UsedSlots was used for this and does not track
-    // the contents: two reads both reporting 702 returned completely different items. A
-    // full pass over the 8000-entry array is cheap, so polling twice a second is simpler
-    // and more dependable than trying to detect the change.
+    /// <summary>
+    /// The dresser is re-read on a timer rather than on a change signal, because the game gives
+    /// nothing reliable to watch: <c>UsedSlots</c> does not track the contents, and two reads
+    /// reporting the same figure can return completely different items. A full pass over the
+    /// array is cheap, so polling is simpler and more dependable than detecting the change.
+    /// </summary>
     private const int PollIntervalFrames = 30;
+
     private int _framesSincePoll = PollIntervalFrames;
 
     /// <summary>Raised on the frame the Glamour Dresser addon becomes readable.</summary>
@@ -54,9 +61,11 @@ public class DresserScanner : IDisposable
     /// <summary>Raised on the frame the Glamour Dresser addon stops being readable.</summary>
     public event Action? DresserClosed;
 
-    // Edge state for the two events above. They must be edge-triggered, not level-triggered:
-    // a handler that reacts to "the dresser is open" every frame would reopen a window the
-    // instant the user closed it.
+    /// <summary>
+    /// Edge state for the two events above. They must be edge-triggered rather than
+    /// level-triggered: a handler reacting to "the dresser is open" every frame would reopen a
+    /// window the instant the user closed it.
+    /// </summary>
     private bool _addonWasReady = false;
 
     private bool _disposed = false;
@@ -70,9 +79,8 @@ public class DresserScanner : IDisposable
     {
         try
         {
-            // Watch the logged-in character rather than the Login event: this also covers
-            // logging out (id 0) and the plugin being enabled mid-session, in one place.
-            // API 15 moved this off IClientState; ContentId is 0 while logged out.
+            // Watching the logged-in character rather than the Login event covers logging out
+            // (id 0) and the plugin being enabled mid-session, in one place.
             var contentId = Plugin.ClientState.IsLoggedIn ? Plugin.PlayerState.ContentId : 0;
             if (contentId != _contentId)
                 SwitchCharacter(contentId);
@@ -92,8 +100,8 @@ public class DresserScanner : IDisposable
 
             if (!addonReady)
             {
-                // Arm the next poll so opening the dresser reads it on the first frame the
-                // addon is ready, rather than waiting out the interval.
+                // Armed, so opening the dresser reads it on the first frame the addon is ready
+                // rather than waiting out the interval.
                 _framesSincePoll = PollIntervalFrames;
                 return;
             }
@@ -109,8 +117,8 @@ public class DresserScanner : IDisposable
             if (items.Count == 0)
                 return;
 
-            // A successful read confirms the cache against the game, whether or not anything
-            // changed - so the "cached" notice clears even when the saved copy was accurate.
+            // A successful read confirms the cache whether or not anything changed, so the
+            // "cached" notice clears even when the saved copy was accurate.
             _fromSavedCache = false;
 
             var signature = SignatureOf(items);
@@ -130,15 +138,15 @@ public class DresserScanner : IDisposable
         }
         catch
         {
-            // Swallowed deliberately: this runs every frame, so a recurring fault would
-            // flood the log. The next poll retries from scratch.
+            // Swallowed deliberately: this runs every frame, so a recurring fault would flood the
+            // log. The next poll retries from scratch.
         }
     }
 
     /// <summary>
-    /// Reads every non-empty entry in the array. UsedSlots is NOT the live item count: with
-    /// UsedSlots at 702 the array held 1212 non-zero entries, and the 510 past that boundary
-    /// were real, distinct items - every boot and every accessory among them.
+    /// Reads every non-empty entry in the array. The whole array is live and must be walked in
+    /// full: <c>UsedSlots</c> is not the item count, and entries well past it are real, distinct
+    /// items rather than leftovers.
     /// </summary>
     private static unsafe List<PrismBoxItem> ReadAll(AgentMiragePrismPrismBox* agent)
     {
@@ -153,8 +161,8 @@ public class DresserScanner : IDisposable
 
             result.Add(new PrismBoxItem
             {
-                // Don't store name from dresser data - it can be incorrect/outdated
-                // Name will be retrieved from Lumina in MainWindow for accuracy
+                // The dresser's own name can be stale, so it is left empty and resolved from the
+                // Item sheet where the row is built.
                 Name = string.Empty,
                 Slot = item.Slot,
                 ItemId = item.ItemId,
@@ -168,9 +176,9 @@ public class DresserScanner : IDisposable
     }
 
     /// <summary>
-    /// Order-insensitive fingerprint of the contents. The array reorders itself as the
-    /// dresser's view changes, and a reshuffle of the same items produces the same results -
-    /// so ordering must not count as a change, or the window would rebuild for nothing.
+    /// Order-insensitive fingerprint of the contents. The array reorders itself as the dresser's
+    /// view changes, and a reshuffle of the same items produces the same results - so ordering
+    /// must not count as a change, or the window would rebuild for nothing.
     /// </summary>
     private static long SignatureOf(List<PrismBoxItem> items)
     {
@@ -181,19 +189,20 @@ public class DresserScanner : IDisposable
         return items.Count * 1_000_000_007L + sum;
     }
 
+    /// <summary>The dresser's contents as last read.</summary>
     public static List<PrismBoxItem> GetDresserItems()
     {
         lock (LockObject)
         {
-            // Return a snapshot copy to prevent race conditions if cache updates during scan
+            // A snapshot, so a poll landing mid-rebuild cannot mutate what the window is reading.
             return new List<PrismBoxItem>(_cachedDresserItems);
         }
     }
 
     /// <summary>
-    /// Drops whatever the previous character had cached and picks up the new character's
-    /// saved copy, if there is one. A content id of 0 means logged out - the cache is
-    /// emptied and nothing is loaded.
+    /// Drops whatever the previous character had cached and picks up the new character's saved
+    /// copy, if there is one. A content id of 0 means logged out: the cache is emptied and
+    /// nothing is loaded.
     /// </summary>
     private static void SwitchCharacter(ulong contentId)
     {
@@ -241,8 +250,8 @@ public class DresserScanner : IDisposable
     }
 
     /// <summary>
-    /// Persists the cache for the current character. Contents change rarely - only when the
-    /// dresser is actually opened or altered - so this is not a hot path.
+    /// Persists the cache for the current character. Contents change only when the dresser is
+    /// opened or altered, so this is not a hot path.
     /// </summary>
     private static void Save()
     {
@@ -266,8 +275,7 @@ public class DresserScanner : IDisposable
                 Items = items,
             };
 
-            // Write to a temporary file and move it into place, so a crash mid-write cannot
-            // leave a half-written cache that fails to parse on next login.
+            // Temp file then move, so a crash mid-write cannot leave a half-written cache.
             var path = PathFor(contentId);
             var temp = path + ".tmp";
             File.WriteAllText(temp, JsonSerializer.Serialize(payload));
@@ -275,8 +283,8 @@ public class DresserScanner : IDisposable
         }
         catch (Exception ex)
         {
-            // A cache that cannot be written is an inconvenience, not a failure - the dresser
-            // can always be read again.
+            // A cache that cannot be written is an inconvenience rather than a failure - the
+            // dresser can always be read again.
             Plugin.Log.Warning(ex, "Could not save the dresser cache");
         }
     }
@@ -324,6 +332,8 @@ public class DresserScanner : IDisposable
     }
 }
 
+/// <summary>One entry as the Glamour Dresser stores it. <c>Slot</c> is the id of the dresser's own
+/// grouping rather than a storage position, so a bundle and its pieces all share one.</summary>
 public class PrismBoxItem
 {
     public string Name { get; set; } = string.Empty;
