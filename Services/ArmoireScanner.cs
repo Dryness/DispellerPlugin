@@ -15,13 +15,10 @@ using CabinetSheet = Lumina.Excel.Sheets.Cabinet;
 namespace Dispeller.Services;
 
 /// <summary>
-/// What the character actually has stored in their Armoire, as a set of item ids.
+/// What the character has stored in their Armoire, as a set of item ids.
 ///
-/// Deliberately a separate class from <see cref="DresserScanner"/> rather than a second
-/// method on it, even though the two are shaped the same: they read different game state,
-/// they can be stale independently of one another, and the window has to be able to say
-/// which of the two is out of date. Folding them together would mean one staleness flag
-/// covering two stores that go stale at different moments.
+/// Separate from <see cref="DresserScanner"/> despite the same shape: the two stores go stale
+/// independently, and the window has to be able to say which of them is out of date.
 /// </summary>
 public class ArmoireScanner : IDisposable
 {
@@ -34,23 +31,19 @@ public class ArmoireScanner : IDisposable
     private static volatile bool _fromSavedCache = false;
     private static DateTimeOffset _savedAt;
 
-    // Bumped to 2 on 2026-08-10 with no change to the file's shape. Every cache written before
-    // then may hold a partial read taken through the Glamour Dresser gate - 219 of 426 items on
-    // the reference character - and a partial read is indistinguishable from a real one once it
-    // is on disk. Discarding them is the only way the fix reaches anyone who already has one.
+    // Bumped to discard every cache written before the read gate was corrected. Those may hold a
+    // partial read, which cannot be told from a real one once it is on disk.
     private const int CacheFormatVersion = 2;
 
     /// <summary>
-    /// False until the Armoire has been read once for this character, live or off disk. This
-    /// is not the same as "the Armoire is empty": an empty Armoire is a fact, an unread one is
-    /// the absence of one, and the window must not draw the second as though it were the first.
+    /// False until the Armoire has been read once for this character, live or off disk. Not the
+    /// same as "the Armoire is empty" - an unread store must not be drawn as an empty one.
     /// </summary>
     public static bool HasData => _hasData;
 
     /// <summary>
-    /// True when what is cached came off disk and has not been confirmed against the game this
-    /// session. A saved copy is only ever a best guess until the Armoire is opened again - the
-    /// character may have stored or withdrawn while the plugin was off, or on another machine.
+    /// True when the cached set came off disk and has not been confirmed against the game this
+    /// session. The character may have stored or withdrawn while the plugin was off.
     /// </summary>
     public static bool IsFromSavedCache => _fromSavedCache;
 
@@ -63,19 +56,50 @@ public class ArmoireScanner : IDisposable
     /// </summary>
     public static int Generation => Volatile.Read(ref _generation);
 
-    // Polled on the same cadence as the dresser, and for the same reason: the game offers no
-    // change signal, and the contents change as the player stores and withdraws. Both of those
-    // happen through the Armoire's own window, so polling while it is open is enough to keep up.
+    // The game offers no change signal, so the set is polled while an Armoire window is open.
+    // Storing and withdrawing both happen through those windows, so that is enough to keep up.
     private const int PollIntervalFrames = 30;
+
+    // How long a window has to have been open, and how many consecutive polls have to agree,
+    // before a read taken through it may be committed.
+    //
+    // The bitfield arrives over several frames once a window asks for it, and IsCabinetLoaded()
+    // can report true part-way through with nothing to tell a partial set from a complete one.
+    //
+    // Both halves are needed. Waiting alone still reads whatever is there at the deadline;
+    // agreement alone confirms a partial set against itself, since reads taken before the data
+    // lands agree perfectly. Together they say the set stopped growing and then stayed that way.
+    //
+    // Owed once per character per session - see _bitfieldComplete.
+    private const int SettleFrames = 120;
+    private const int AgreeingPollsRequired = 2;
+
     private int _framesSincePoll = PollIntervalFrames;
 
-    // Cabinet sheet row -> item id, built once. The game's IsItemInCabinet is keyed by the
-    // sheet's row id, not by item id, so the mapping has to be walked in that direction; over
-    // 5000 rows that is not something to redo on every poll.
-    //
-    // The category rides along only so the log can break the result down by the Armoire's own
-    // tabs - "Costumes", "Fashions", "Dungeon Gear" - which is a breakdown that can be checked
-    // against the game's own UI by hand, unlike a bare total.
+    // Per-open state, cleared every time the gate closes so each visit earns its read from
+    // scratch rather than inheriting confidence from the last one.
+    private int _framesGateOpen;
+    private string? _openGate;
+    private long _candidateSignature = -1;
+    private int _candidateCount;
+    private int _agreeingPolls;
+    private bool _settledThisOpen;
+
+    /// <summary>
+    /// True once a read has settled for this character this session - the point at which the whole
+    /// bitfield is known to have arrived.
+    ///
+    /// The settle wait exists to catch a partially-arrived set, and the client does not un-receive
+    /// what it has received, so the wait is owed once rather than once per visit. Making a later
+    /// store or withdraw serve it is how a brief visit loses the change that prompted it.
+    ///
+    /// Per character, because the bitfield belongs to the logged-in character.
+    /// </summary>
+    private static volatile bool _bitfieldComplete;
+
+    // Cabinet sheet row -> item id, built once. IsItemInCabinet is keyed by sheet row rather than
+    // by item id, so the mapping has to be walked in that direction, and the sheet is far too
+    // large to redo per poll. The category rides along for the log breakdown.
     private static (uint CabinetRow, uint ItemId, uint Category)[]? _cabinetRows;
     private static Dictionary<uint, string>? _categoryNames;
 
@@ -90,109 +114,214 @@ public class ArmoireScanner : IDisposable
     {
         try
         {
-            // Same character watch as the dresser's, for the same reasons: this covers login,
-            // logout (id 0) and the plugin being enabled mid-session in one place.
+            // Same character watch as the dresser's: this covers login, logout (id 0) and the
+            // plugin being enabled mid-session in one place.
             var contentId = Plugin.ClientState.IsLoggedIn ? Plugin.PlayerState.ContentId : 0;
             if (contentId != _contentId)
+            {
                 SwitchCharacter(contentId);
+
+                // Whatever was mid-settle described the character being left. Closed without a
+                // UIState so the final-read path cannot fire against the wrong content id.
+                CloseGate(null);
+            }
 
             if (contentId == 0)
                 return;
 
-            // Read only while a window that displays Armoire contents is open.
-            //
-            // IsCabinetLoaded() returns true over a bitfield the client has only partly received -
-            // the login-time fill covers about the first 1024 rows - and opening one of those
-            // windows is what makes it fetch the rest. A partial read cannot be told from a
-            // complete one after the fact, so the only defence is to not take one. See OpenGate.
+            // Read only while a window that displays Armoire contents is open, and only commit
+            // once that read has settled. See OpenGate for which windows qualify.
             var uiState = UIState.Instance();
             var gate = OpenGate();
 
-            if (gate == null || uiState == null || !uiState->Cabinet.IsCabinetLoaded())
+            if (gate == null || uiState == null)
             {
-                // Arm the next poll, so opening one of them is read on the first frame its data
-                // lands rather than up to half a second later.
-                _framesSincePoll = PollIntervalFrames;
+                // The window has gone. CloseGate takes a final read on the way out when the set is
+                // already known complete, so a change made since the last poll is not lost.
+                CloseGate(uiState);
                 return;
             }
 
+            if (_openGate == null)
+            {
+                _openGate = gate;
+                Plugin.Log.Debug($"Armoire window open ({gate})");
+            }
+
+            // The window is open and the client is fetching - Cabinet.State runs
+            // Loaded -> Requested -> Loaded when "Store an item" is opened directly. That is not
+            // the window closing, so the gate stays open, but the settle restarts: the clock
+            // should measure from when the data lands.
+            if (!uiState->Cabinet.IsCabinetLoaded())
+            {
+                RestartSettle();
+                return;
+            }
+
+            _framesGateOpen++;
+
+            // Armed to fire on the first frame the gate opens, so the settle has an early
+            // candidate to compare later reads against.
             if (++_framesSincePoll < PollIntervalFrames)
                 return;
             _framesSincePoll = 0;
 
+            // An empty Armoire is a legitimate answer here, unlike an empty dresser read: the gate
+            // establishes that the data is real, so empty means empty.
             var itemIds = ReadAll(uiState);
-
-            // An empty Armoire is a legitimate answer here, unlike an empty dresser read: the
-            // gate above establishes that the data is real, so an empty set means empty rather
-            // than not-yet-arrived and there is nothing to throw away.
             var signature = SignatureOf(itemIds);
 
-            // Losing a large share of the set in one poll is not a player emptying their
-            // Armoire - withdrawing is one item at a time - it is an incomplete read. Not
-            // refused, because refusing would need a rule for when to stop refusing, but said
-            // out loud so it cannot go unnoticed the way the first one did.
-            var previousCount = _cachedItemIds.Count;
-            if (previousCount > 0 && itemIds.Count * 4 < previousCount * 3)
-                Plugin.Log.Warning(
-                    $"Armoire read via {gate} dropped from {previousCount} to {itemIds.Count} items "
-                    + $"(cabinet state {uiState->Cabinet.State}) - suspect an incomplete read");
-
-            // A successful read confirms the cache against the game whether or not anything
-            // changed, so the "cached" notice clears even when the saved copy was accurate.
-            var wasUnconfirmed = !_hasData || _fromSavedCache;
-            _fromSavedCache = false;
-            _hasData = true;
-
-            lock (LockObject)
+            if (signature == _candidateSignature)
             {
-                if (!wasUnconfirmed && signature == _cachedSignature)
-                    return;
+                _agreeingPolls++;
+            }
+            else
+            {
+                // A change mid-settle is the rest of the data arriving, which is what the wait is
+                // for, and nothing the game exposes says it happened.
+                if (_candidateSignature != -1)
+                    Plugin.Log.Debug(
+                        $"Armoire read changed from {_candidateCount} to {itemIds.Count} items "
+                        + $"{_framesGateOpen} frames after opening ({gate}) - settle restarted");
 
-                _cachedItemIds = itemIds;
-                _cachedSignature = signature;
+                _candidateSignature = signature;
+                _candidateCount = itemIds.Count;
+                _agreeingPolls = 1;
             }
 
-            Interlocked.Increment(ref _generation);
-            Save();
-            // The gate is named in the log deliberately. Which windows actually complete the
-            // bitfield is an empirical question, and if one of them ever caches a short read
-            // this line is what says which one did it.
-            Plugin.Log.Information(
-                $"Armoire cache updated: {itemIds.Count} items stored via {gate}, "
-                + $"cabinet state {uiState->Cabinet.State} (generation {Generation})");
-            LogBreakdown(itemIds);
+            // Owed once per session. After that the set is known complete, so a change is a store
+            // or a withdraw and commits on the first poll that sees it.
+            if (!_bitfieldComplete && (_framesGateOpen < SettleFrames || _agreeingPolls < AgreeingPollsRequired))
+                return;
+
+            if (!_settledThisOpen)
+            {
+                _settledThisOpen = true;
+
+                if (!_bitfieldComplete)
+                {
+                    _bitfieldComplete = true;
+                    Plugin.Log.Information(
+                        $"Armoire read settled at {itemIds.Count} items after {_framesGateOpen} frames "
+                        + $"via {gate} (cabinet state {uiState->Cabinet.State})");
+                }
+            }
+
+            Commit(itemIds, signature, uiState, gate);
         }
         catch
         {
-            // Swallowed for the same reason DresserScanner swallows: this runs every frame, so
-            // a recurring fault would flood the log. The next poll retries from scratch.
+            // Swallowed for the same reason DresserScanner swallows: this runs every frame, so a
+            // recurring fault would flood the log. The next poll retries from scratch.
         }
+    }
+
+    /// <summary>
+    /// Drops what was learned while the gate was open, so the next visit starts from nothing.
+    ///
+    /// A candidate that never settled is discarded rather than kept as a best guess: an unread or
+    /// stale Armoire says so in the window, where a partial read flagged live says nothing at all
+    /// and is wrong on every row it is missing.
+    ///
+    /// Once the set is known complete the closing frames are worth reading, though - the player
+    /// may have stored or withdrawn since the last poll - so a final read is taken. It stays valid
+    /// after the addon has gone, because the bitfield lives on UIState rather than on the agent.
+    ///
+    /// <paramref name="uiState"/> is null when there is nothing to read against, and deliberately
+    /// null on a character switch, where the read would belong to the character being left.
+    /// </summary>
+    private unsafe void CloseGate(UIState* uiState)
+    {
+        var gate = _openGate;
+
+        if (gate != null && _bitfieldComplete && uiState != null && uiState->Cabinet.IsCabinetLoaded())
+        {
+            var itemIds = ReadAll(uiState);
+            Commit(itemIds, SignatureOf(itemIds), uiState, $"{gate}, closing");
+        }
+        else if (gate != null && !_settledThisOpen)
+        {
+            Plugin.Log.Information(
+                $"Armoire window ({gate}) closed after {_framesGateOpen} frames without settling - "
+                + (_candidateSignature == -1
+                    ? "no read taken"
+                    : $"last read of {_candidateCount} items discarded"));
+        }
+
+        _openGate = null;
+        _settledThisOpen = false;
+        RestartSettle();
+    }
+
+    /// <summary>
+    /// Clears the settle clock and its candidate, leaving the gate itself open.
+    ///
+    /// Deliberately does not touch <c>_settledThisOpen</c>: a read that settled earlier in this
+    /// open really did settle, and clearing it would report the eventual close as having lost
+    /// something it did not.
+    /// </summary>
+    private void RestartSettle()
+    {
+        _framesGateOpen = 0;
+        _candidateSignature = -1;
+        _candidateCount = 0;
+        _agreeingPolls = 0;
+
+        // Armed, so the frame after this is read rather than up to half a second later.
+        _framesSincePoll = PollIntervalFrames;
+    }
+
+    /// <summary>
+    /// Writes a read into the cache. Shared by the poll and the final read on close so the two
+    /// cannot drift apart.
+    /// </summary>
+    private static unsafe void Commit(HashSet<uint> itemIds, long signature, UIState* uiState, string gate)
+    {
+        // Withdrawing is one item at a time, so a large drop in a single read is an incomplete
+        // read rather than a player emptying their Armoire. Not refused - that would need a rule
+        // for when to stop refusing - but said out loud.
+        var previousCount = _cachedItemIds.Count;
+        if (previousCount > 0 && itemIds.Count * 4 < previousCount * 3)
+            Plugin.Log.Warning(
+                $"Armoire read via {gate} dropped from {previousCount} to {itemIds.Count} items "
+                + $"(cabinet state {uiState->Cabinet.State}) - suspect an incomplete read");
+
+        // A successful read confirms the cache whether or not anything changed, so the "cached"
+        // notice clears even when the saved copy was accurate.
+        var wasUnconfirmed = !_hasData || _fromSavedCache;
+        _fromSavedCache = false;
+        _hasData = true;
+
+        lock (LockObject)
+        {
+            if (!wasUnconfirmed && signature == _cachedSignature)
+                return;
+
+            _cachedItemIds = itemIds;
+            _cachedSignature = signature;
+        }
+
+        Interlocked.Increment(ref _generation);
+        Save();
+        Plugin.Log.Information(
+            $"Armoire cache updated: {itemIds.Count} items stored via {gate}, "
+            + $"cabinet state {uiState->Cabinet.State} (generation {Generation})");
+        LogBreakdown(itemIds);
     }
 
     /// <summary>
     /// The window, if any, that licenses a read this frame - or null to leave the cache alone.
     ///
-    /// Only the two windows that actually display Armoire contents qualify, and that is the whole
-    /// of the rule. "Store an item" and "Remove an item" are separate agents with separate addons,
-    /// so covering the first does nothing for the second, and a player who withdrew through one
-    /// would otherwise be looking at results that still counted the item.
+    /// Only the two windows that display Armoire contents qualify. "Store an item" and "Remove an
+    /// item" are separate agents with separate addons, so covering one does nothing for the other.
     ///
-    /// The Glamour Dresser used to be a third door here and was wrong. Measured 2026-08-10 across
-    /// three cold starts: the client fills roughly the first 1024 Cabinet rows at login and sets
-    /// State to Loaded, and the dresser reads that happily - 219 of 426 items, every Dungeon Gear
-    /// entry missing, cached and written to disk as though it were the answer. Only opening a
-    /// window that shows Armoire contents makes the client fetch the rest. Nothing distinguishes
-    /// the two states from outside: State, IsCabinetLoaded() and the bitfield's own length are
-    /// identical in both, so there is no test to apply and the only defence is to not read.
+    /// The Glamour Dresser is deliberately not a third door: it does not display Armoire contents,
+    /// so it never makes the client fetch them and a read through it takes whatever happens to be
+    /// there. Excluding it costs nothing, since the stored set only changes by storing or
+    /// withdrawing and both happen behind these two agents. Nor does it strand anyone at the
+    /// dresser - Edit Glamour Plates -> Open Armoire drives AgentCabinetWithdraw.
     ///
-    /// Dropping it costs nothing. The stored set can only change by storing or withdrawing, and
-    /// both of those happen behind the two agents below, so the dresser could never have seen a
-    /// change these miss.
-    ///
-    /// Reaching an Armoire view does not mean leaving the dresser: Edit Glamour Plates -> Open
-    /// Armoire drives AgentCabinetWithdraw, verified 2026-08-10, and reads complete.
-    ///
-    /// Named rather than boolean so the log can say which door a given read came through.
+    /// Named rather than boolean so the log can say which door a read came through.
     /// </summary>
     private static unsafe string? OpenGate()
     {
@@ -208,9 +337,8 @@ public class ArmoireScanner : IDisposable
     }
 
     /// <summary>
-    /// Cabinet sheet rows that actually carry an item. Rows with no item attached are placeholders
-    /// - roughly a quarter of the sheet - and are skipped: they would answer the lookup happily and
-    /// add item id 0 to the set.
+    /// Cabinet sheet rows that carry an item. Rows with none attached are placeholders and are
+    /// skipped: they answer the lookup happily and would add item id 0 to the set.
     /// </summary>
     private static (uint CabinetRow, uint ItemId, uint Category)[] CabinetRows()
         => _cabinetRows ??= Plugin.DataManager.GetExcelSheet<CabinetSheet>()!
@@ -219,9 +347,8 @@ public class ArmoireScanner : IDisposable
             .ToArray();
 
     /// <summary>
-    /// Walks the Cabinet sheet and asks the game about each row. The item id is what comes back,
-    /// because that is the identity everything else in the plugin is keyed on - the cabinet row
-    /// is an implementation detail of the lookup and is not worth carrying any further.
+    /// Asks the game about every cabinet row. The item id is what comes back, because that is the
+    /// identity the rest of the plugin is keyed on.
     /// </summary>
     private static unsafe HashSet<uint> ReadAll(UIState* uiState)
     {
@@ -237,13 +364,10 @@ public class ArmoireScanner : IDisposable
     }
 
     /// <summary>
-    /// The result split by the Armoire's own tabs. Logged only when the contents actually
-    /// change, not on every poll.
+    /// The result split by the Armoire's own tabs, logged only when the contents change.
     ///
-    /// This exists to be checked against the game by hand. IsItemInCabinet is keyed by Cabinet
-    /// sheet row rather than by item id, and a mapping that were off by anything would still
-    /// return a plausible-looking total - a per-tab breakdown that has to match what the Armoire
-    /// itself shows is what can actually catch that.
+    /// Exists to be checked against the game by hand: IsItemInCabinet is keyed by sheet row rather
+    /// than by item id, and a mapping that were off would still return a plausible-looking total.
     /// </summary>
     private static void LogBreakdown(HashSet<uint> stored)
     {
@@ -267,10 +391,7 @@ public class ArmoireScanner : IDisposable
             Plugin.Log.Debug($"Armoire category {_categoryNames.GetValueOrDefault(group.Key, $"Category {group.Key}")}: {group.Count()}");
     }
 
-    /// <summary>
-    /// Order-insensitive fingerprint, like the dresser's. A HashSet has no meaningful order to
-    /// begin with, so this could not have been anything else.
-    /// </summary>
+    /// <summary>Order-insensitive fingerprint of the stored set.</summary>
     private static long SignatureOf(HashSet<uint> itemIds)
     {
         long sum = 0;
@@ -304,6 +425,9 @@ public class ArmoireScanner : IDisposable
 
         _hasData = false;
         _fromSavedCache = false;
+
+        // The incoming character's bitfield is their own, so the settle wait is owed again.
+        _bitfieldComplete = false;
         Interlocked.Increment(ref _generation);
 
         if (contentId == 0)
