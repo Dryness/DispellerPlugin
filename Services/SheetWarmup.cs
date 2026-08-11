@@ -10,34 +10,79 @@ namespace Dispeller.Services;
 /// Pages the Excel sheets the results are built from into memory, on a background thread, before
 /// anything on the framework thread asks for them.
 ///
-/// The first <c>BuildGroups</c> of a session costs about 25-40ms and every one after it costs
-/// 1-2ms for the same data, so the cost is warmup rather than work - measured at 23.5ms for 426
-/// items and 2.0ms for 1636 half a second later. It is Lumina paging <c>.exd</c> data in and the
-/// JIT compiling the pipeline, not the item count. Doing the paging here means the framework
-/// thread finds the sheets already resident, which is the only way to remove that hitch rather
-/// than relocate it - a framework handler would be the game's main thread too.
+/// The first <c>BuildGroups</c> of a session costs far more than every one after it for the same
+/// data, so the cost is warmup rather than work: Lumina paging <c>.exd</c> data in, and the JIT
+/// compiling the pipeline. Paging here is the only way to remove that hitch rather than relocate
+/// it - a framework handler would be the game's main thread too.
 ///
-/// This only ever reads, and it reads sheets the game treats as immutable static data. Lumina
-/// caches sheets in a <c>ConcurrentDictionary</c>, so the worst a race with the framework thread
-/// can do is build one twice and throw one away. Nothing here is load-bearing: if it fails, or
-/// never gets to run, the first build simply pays what it paid before.
+/// This only ever reads, and only sheets the game treats as immutable static data. Lumina caches
+/// sheets in a <c>ConcurrentDictionary</c>, so the worst a race with the framework thread can do
+/// is build one twice and throw one away. Nothing here is load-bearing: if it fails, or never gets
+/// to run, the first build simply pays what it paid before.
 /// </summary>
 internal static class SheetWarmup
 {
-    private static int started;
-    private static readonly CancellationTokenSource Cancellation = new();
+    // Static state outlives the plugin instance whenever Dalamud reuses the assembly - a
+    // disable/enable, or a dev reload landing in the same load context. So this has to be a cycle
+    // rather than a latch: Stop() undoes what Start() did, down to the one-shot flag, or the
+    // second load of a session silently gets no warmup.
+    private static readonly object Gate = new();
+    private static bool started;
+    private static CancellationTokenSource? cancellation;
 
-    /// <summary>Kicks the warmup off once. Safe to call more than once; later calls do nothing.</summary>
+    /// <summary>
+    /// Kicks the warmup off once per load. Safe to call more than once; later calls do nothing
+    /// until <see cref="Stop"/> has run.
+    /// </summary>
     public static void Start()
     {
-        if (Interlocked.Exchange(ref started, 1) != 0)
-            return;
+        CancellationToken token;
 
-        Task.Run(() => Run(Cancellation.Token), Cancellation.Token);
+        lock (Gate)
+        {
+            if (started)
+            {
+                Plugin.Log.Debug("Sheet warmup already running - not started again");
+                return;
+            }
+
+            started = true;
+            cancellation = new CancellationTokenSource();
+            token = cancellation.Token;
+        }
+
+        // The token is deliberately not passed to Task.Run: that would complete the task as
+        // Cancelled, and nothing awaits this one. Run() handles the token and returns normally,
+        // which leaves nothing unobserved behind.
+        _ = Task.Run(() => Run(token));
+        Plugin.Log.Debug("Sheet warmup started");
     }
 
-    /// <summary>Stops the warmup if it is still going, so an unloading plugin doesn't leave it running.</summary>
-    public static void Stop() => Cancellation.Cancel();
+    /// <summary>
+    /// Stops the warmup if it is still going, so an unloading plugin doesn't leave it running, and
+    /// puts the class back where <see cref="Start"/> found it.
+    /// </summary>
+    public static void Stop()
+    {
+        CancellationTokenSource? cts;
+
+        lock (Gate)
+        {
+            if (!started)
+                return;
+
+            started = false;
+            cts = cancellation;
+            cancellation = null;
+        }
+
+        cts?.Cancel();
+
+        // Safe to dispose straight after cancelling: the running task only reads
+        // IsCancellationRequested off its captured token, which stays readable once disposed.
+        cts?.Dispose();
+        Plugin.Log.Debug("Sheet warmup stopped");
+    }
 
     private static void Run(CancellationToken token)
     {
@@ -50,7 +95,12 @@ internal static class SheetWarmup
             var outfits = Warm("MirageStoreSetItem", OutfitService.Warm, token);
 
             if (token.IsCancellationRequested)
+            {
+                Plugin.Log.Debug(
+                    $"Sheet warmup cancelled after {total.Elapsed.TotalMilliseconds:F1} ms - "
+                    + "the next load will warm from scratch");
                 return;
+            }
 
             Plugin.Log.Information(
                 $"Sheet warmup finished in {total.Elapsed.TotalMilliseconds:F1} ms "
