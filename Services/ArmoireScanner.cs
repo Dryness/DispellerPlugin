@@ -34,7 +34,11 @@ public class ArmoireScanner : IDisposable
     private static volatile bool _fromSavedCache = false;
     private static DateTimeOffset _savedAt;
 
-    private const int CacheFormatVersion = 1;
+    // Bumped to 2 on 2026-08-10 with no change to the file's shape. Every cache written before
+    // then may hold a partial read taken through the Glamour Dresser gate - 219 of 426 items on
+    // the reference character - and a partial read is indistinguishable from a real one once it
+    // is on disk. Discarding them is the only way the fix reaches anyone who already has one.
+    private const int CacheFormatVersion = 2;
 
     /// <summary>
     /// False until the Armoire has been read once for this character, live or off disk. This
@@ -95,12 +99,12 @@ public class ArmoireScanner : IDisposable
             if (contentId == 0)
                 return;
 
-            // Read only while a window that deals in Armoire contents is open.
+            // Read only while a window that displays Armoire contents is open.
             //
-            // IsCabinetLoaded() returns true over a bitfield the client has only partly
-            // received; opening one of these windows is what completes it. A partial read is
-            // indistinguishable from a complete one after the fact, so the only defence is to
-            // not take one.
+            // IsCabinetLoaded() returns true over a bitfield the client has only partly received -
+            // the login-time fill covers about the first 1024 rows - and opening one of those
+            // windows is what makes it fetch the rest. A partial read cannot be told from a
+            // complete one after the fact, so the only defence is to not take one. See OpenGate.
             var uiState = UIState.Instance();
             var gate = OpenGate();
 
@@ -168,11 +172,25 @@ public class ArmoireScanner : IDisposable
     /// <summary>
     /// The window, if any, that licenses a read this frame - or null to leave the cache alone.
     ///
-    /// Three doors lead to Armoire contents and all three have to work, because a player who
-    /// withdrew something through one of them would otherwise be looking at results that still
-    /// counted it. "Store an item" and "Remove an item" are separate agents with separate
-    /// addons, so covering the first does nothing for the second, and the Glamour Dresser
-    /// reaches Armoire items without either being involved.
+    /// Only the two windows that actually display Armoire contents qualify, and that is the whole
+    /// of the rule. "Store an item" and "Remove an item" are separate agents with separate addons,
+    /// so covering the first does nothing for the second, and a player who withdrew through one
+    /// would otherwise be looking at results that still counted the item.
+    ///
+    /// The Glamour Dresser used to be a third door here and was wrong. Measured 2026-08-10 across
+    /// three cold starts: the client fills roughly the first 1024 Cabinet rows at login and sets
+    /// State to Loaded, and the dresser reads that happily - 219 of 426 items, every Dungeon Gear
+    /// entry missing, cached and written to disk as though it were the answer. Only opening a
+    /// window that shows Armoire contents makes the client fetch the rest. Nothing distinguishes
+    /// the two states from outside: State, IsCabinetLoaded() and the bitfield's own length are
+    /// identical in both, so there is no test to apply and the only defence is to not read.
+    ///
+    /// Dropping it costs nothing. The stored set can only change by storing or withdrawing, and
+    /// both of those happen behind the two agents below, so the dresser could never have seen a
+    /// change these miss.
+    ///
+    /// Reaching an Armoire view does not mean leaving the dresser: Edit Glamour Plates -> Open
+    /// Armoire drives AgentCabinetWithdraw, verified 2026-08-10, and reads complete.
     ///
     /// Named rather than boolean so the log can say which door a given read came through.
     /// </summary>
@@ -186,12 +204,19 @@ public class ArmoireScanner : IDisposable
         if (withdraw != null && withdraw->IsAddonReady())
             return "Armoire (remove)";
 
-        var dresser = AgentMiragePrismPrismBox.Instance();
-        if (dresser != null && dresser->IsAddonReady())
-            return "Glamour Dresser";
-
         return null;
     }
+
+    /// <summary>
+    /// Cabinet sheet rows that actually carry an item. Rows with no item attached are placeholders
+    /// - roughly a quarter of the sheet - and are skipped: they would answer the lookup happily and
+    /// add item id 0 to the set.
+    /// </summary>
+    private static (uint CabinetRow, uint ItemId, uint Category)[] CabinetRows()
+        => _cabinetRows ??= Plugin.DataManager.GetExcelSheet<CabinetSheet>()!
+            .Where(row => row.Item.RowId != 0)
+            .Select(row => (row.RowId, row.Item.RowId, row.Category.RowId))
+            .ToArray();
 
     /// <summary>
     /// Walks the Cabinet sheet and asks the game about each row. The item id is what comes back,
@@ -200,16 +225,9 @@ public class ArmoireScanner : IDisposable
     /// </summary>
     private static unsafe HashSet<uint> ReadAll(UIState* uiState)
     {
-        // Rows with no item attached are placeholders in the sheet and are skipped - roughly a
-        // quarter of it. They would answer the lookup happily and add item id 0 to the set.
-        _cabinetRows ??= Plugin.DataManager.GetExcelSheet<CabinetSheet>()!
-            .Where(row => row.Item.RowId != 0)
-            .Select(row => (row.RowId, row.Item.RowId, row.Category.RowId))
-            .ToArray();
-
         var stored = new HashSet<uint>();
 
-        foreach (var (cabinetRow, itemId, _) in _cabinetRows)
+        foreach (var (cabinetRow, itemId, _) in CabinetRows())
         {
             if (uiState->Cabinet.IsItemInCabinet(cabinetRow))
                 stored.Add(itemId);
