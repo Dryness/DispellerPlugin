@@ -27,6 +27,12 @@ public class MainWindow : Window, IDisposable
     private readonly Plugin plugin;
     private List<SharedModelGroup>? sharedGroups;
     private string statusMessage = "Open your Glamour Dresser to get started!";
+
+    // Carried alongside the message rather than derived from it, because the status line says two
+    // different kinds of thing: a prompt for something the plugin still needs, which reads as the
+    // same class of message as the stale-cache notices, and a summary of what it found, which does
+    // not. Deriving the colour would mean matching on the text.
+    private Vector4 statusColor = UiStyle.StaleNotice;
     private int lastGeneration = DresserScanner.Generation;
     private int lastArmoireGeneration = ArmoireScanner.Generation;
     private int lastConfigRevision = Configuration.Revision;
@@ -158,15 +164,10 @@ public class MainWindow : Window, IDisposable
         UiStyle.DrawHeaderBand($"{(char)SeIconChar.Hyadelyn} Dispeller {(char)SeIconChar.Hyadelyn}");
     }
 
-    private void DrawStatus()
-    {
-        var centerPos = (ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(statusMessage).X) / 2;
-        ImGui.SetCursorPosX(centerPos);
-        
-        ImGui.PushStyleColor(ImGuiCol.Text, UiStyle.BrightWhite);
-        ImGui.TextUnformatted(statusMessage);
-        ImGui.PopStyleColor();
-    }
+    // Routed through the same helper as the notices, so the status line gets the clamped centring
+    // too - "Found N redundant items ... M perfect duplicates. (K hidden)" is the longest string
+    // the window draws, and it was the one most able to walk off the left edge.
+    private void DrawStatus() => DrawCentredNotice((statusMessage, statusColor));
 
     /// <summary>
     /// Indicates when the results were built from a copy saved on disk rather than from a live
@@ -180,31 +181,57 @@ public class MainWindow : Window, IDisposable
     private void DrawCachedNotice()
     {
         if (DresserScanner.IsFromSavedCache)
-            DrawCentredNotice(
-                $"Dresser cached from {DresserScanner.SavedAt.ToLocalTime():d MMM yyyy, HH:mm} - open it to refresh",
-                UiStyle.LightPurple);
+            DrawStaleNotice("Dresser", DresserScanner.SavedAt);
 
         // "Never read" is not the same as "empty", and the difference matters here: without it,
         // every row would be claiming its item is not in the Armoire on the strength of never
         // having looked.
         if (!ArmoireScanner.HasData)
-            DrawCentredNotice(
-                "Armoire not read yet - open it once to include what's stored there",
-                UiStyle.LightPurple);
+            DrawCentredNotice(("Open your Armoire at least once so it can be read!", UiStyle.StaleNotice));
         else if (ArmoireScanner.IsFromSavedCache)
-            DrawCentredNotice(
-                $"Armoire cached from {ArmoireScanner.SavedAt.ToLocalTime():d MMM yyyy, HH:mm} - open it to refresh",
-                UiStyle.LightPurple);
+            DrawStaleNotice("Armoire", ArmoireScanner.SavedAt);
     }
 
-    private static void DrawCentredNotice(string message, Vector4 color)
-    {
-        var centerPos = (ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(message).X) / 2;
-        ImGui.SetCursorPosX(centerPos);
+    /// <summary>
+    /// One store's "this came off disk" line. Both stores go through here so they cannot drift
+    /// apart in wording or colour - the only thing that differs is which store is named.
+    ///
+    /// The timestamp is its own colour run: it is the one part of the line that is a fact rather
+    /// than an instruction, and it is what the reader is actually looking for.
+    /// </summary>
+    private static void DrawStaleNotice(string store, DateTimeOffset savedAt)
+        => DrawCentredNotice(
+            ($"{store} cached from ", UiStyle.StaleNotice),
+            ($"{savedAt.ToLocalTime():d MMM yyyy, HH:mm}", UiStyle.BrightWhite),
+            (". Open it to refresh.", UiStyle.StaleNotice));
 
-        ImGui.PushStyleColor(ImGuiCol.Text, color);
-        ImGui.TextUnformatted(message);
-        ImGui.PopStyleColor();
+    /// <summary>
+    /// A single centred line assembled from differently coloured runs. Measured whole and
+    /// positioned once, so the colour changes do not shift where the line sits.
+    /// </summary>
+    private static void DrawCentredNotice(params (string Text, Vector4 Color)[] runs)
+    {
+        var width = 0f;
+        foreach (var (text, _) in runs)
+            width += ImGui.CalcTextSize(text).X;
+
+        // Clamped at zero, for the reason UiStyle.DrawPinnedFooter clamps: a line wider than the
+        // window centres to a negative offset, which walks its start off the left edge instead of
+        // letting the end clip. At minimum window width that is the difference between a message
+        // missing its tail and one missing its beginning.
+        ImGui.SetCursorPosX(Math.Max(0, (ImGui.GetContentRegionAvail().X - width) / 2));
+
+        for (var i = 0; i < runs.Length; i++)
+        {
+            // Zero spacing, or ImGui inserts its item spacing between the runs and the line reads
+            // as words pulled apart rather than as one sentence.
+            if (i > 0)
+                ImGui.SameLine(0, 0);
+
+            ImGui.PushStyleColor(ImGuiCol.Text, runs[i].Color);
+            ImGui.TextUnformatted(runs[i].Text);
+            ImGui.PopStyleColor();
+        }
     }
 
     private void DrawResults(float footerHeight)
@@ -840,6 +867,7 @@ public class MainWindow : Window, IDisposable
             if (uniqueItems.Count == 0)
             {
                 statusMessage = "Open your Glamour Dresser at least once so it can be read!";
+                statusColor = UiStyle.StaleNotice;
                 sharedGroups = null;
                 return;
             }
@@ -1012,6 +1040,7 @@ public class MainWindow : Window, IDisposable
             // "Redundant" rather than "with shared models": most are, but the ones held in both
             // stores are here on their own account and the headline should not misdescribe them.
             statusMessage = $"Found {totalItems} redundant items across {categoryCount} slot categories!";
+            statusColor = UiStyle.BrightWhite;
 
             // Called out separately from the total because it is the one number that is
             // actionable without any comparing: a second copy, in the Armoire or in the dresser
@@ -1041,6 +1070,7 @@ public class MainWindow : Window, IDisposable
         catch (Exception ex)
         {
             statusMessage = $"Error: {ex.Message}";
+            statusColor = UiStyle.StaleNotice;
             sharedGroups = null;
             Plugin.Log.Error(ex, "Error during dresser scan");
         }

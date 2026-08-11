@@ -48,6 +48,13 @@ internal static class UiStyle
     // gold rather than another shade of the plugin's pink, so it does not read as decoration.
     internal static readonly Vector4 Attention = new(0.96f, 0.78f, 0.36f, 1.00f);
 
+    // The notices that say the results are not fully live - a store read from disk rather than
+    // from the game, or one never read at all. Red because these qualify everything below them:
+    // whatever the rows claim, they are claiming it about data the plugin has not confirmed. The
+    // three share one colour so they read as one class of message rather than three warnings of
+    // varying seriousness.
+    internal static readonly Vector4 StaleNotice = new(0.93f, 0.44f, 0.46f, 1.00f);
+
     internal const float HeaderHeight = 60f;
     private const float TitleFontScale = 1.6f;
 
