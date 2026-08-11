@@ -3,37 +3,30 @@
 A Dalamud plugin for FINAL FANTASY XIV that helps you clean out your Glamour Dresser by
 identifying items that share the same visual model.
 
-A lot of what fills your dresser may be redundant - different items that look identical once
-equipped. Dispeller scans the dresser and the Armoire, groups items by equipment slot and
-model, and shows you the groups where more than one item resolves to the same appearance.
-Keep one, dispel the rest, free up space for more.
+**Dispeller** scans your Glamour Dresser and the Armoire, groups items by equipment slot and
+model, and shows you the groups where more than one item resolves to the same appearance.  
 
-Each row carries the game's own Glamour Dresser and Armoire icons to show where the item is
-being kept. An item is flagged as a perfect duplicate when a second copy exists - in the
-Armoire, which stores it for free, or in the dresser itself. An item that could move to the
-Armoire but hasn't is flagged too.
+**Dispeller** matches the models *mesh* only by default, but you can toggle colour matches.  
+HQ items are treated as Normal items, and will match accordingly.
 
-Matching is on the *mesh* by default, so recolours and material variants count as redundant;
-a setting tightens it to require the variant to match too. HQ entries are matched against
-their normal-quality twins and marked with the HQ glyph.
-
-Items linked to an outfit are tagged `[Outfit]`, so it's clear that discarding one breaks up
-a set - the tag can be switched off in the settings. An outfit held under more than one
-dresser grouping gets its own section, since the second grouping spends dresser slots on an
-outfit you already have.
+An item is flagged as a `[Perfect duplicate]` when an exact copy exists anywhere - Dresser
+or Armoire.  
+Items linked to an outfit are tagged `[Outfit]`, and the tag can be switched off in the settings.
+If you managed create identical outfits in the Dresser, those will get flagged as well. 
 
 <p align="center">
   <img src="images/dispeller.png" alt="The Dispeller Continued window, showing a Main Hand group with a perfect duplicate and an Armoire-eligible item" width="460">
 </p>
 
 This is a fork of [pupwife/DispellerPlugin](https://github.com/pupwife/DispellerPlugin),
-maintained for personal use only.
+maintained for personal use only.  
 
+## Disclaimer 
 *I used Claude (Opus 5, max effort) to update to the current Dalamud API level (15) to work
-on the current patch at time of commit (7.55).*
-
-*I make no claims of ownership over any of the code in this repo.*
-
+on the current patch at time of commit (7.55).  
+I'll try to keep it maintained for as long as my company keeps paying for Claude, and my FFXIV
+sub remains active - not mutually exclusive.*  
+*I make no claims of ownership over any of the code in this repo.*  
 *This is a strictly "**works on my machine**" fork, with no guarantees that it will work on
 yours.*
 
@@ -48,18 +41,16 @@ https://raw.githubusercontent.com/Dryness/DispellerPlugin/master/repo.json
 
 ## Usage
 
-`/dispeller` to open the GUI. It will be empty until you open your Glamour Dresser once, at
-which point it will automatically populate with both the dresser and armoire.
-Opening just the armoire (to store or remove) will only populate with armoire data.
-Updates are real-time as items are added or removed to either.
+`/dispeller` to open the GUI. It will be empty until you open your Glamour Dresser and/or
+Armoire.  You **must** open both to get a proper comparison between both, otherwise it will
+match only what it sees (duh).  
 
-Both are saved per character, so the results are there the next time you log in without
-having to open either again. Anything shown from a saved copy is labelled with the date it
-was taken, since the contents may have changed since — open the dresser or the Armoire and
-its label clears.
+Cache and settings are saved per-character.
 
-Right-click an item to hide it. A hidden item is left out of the duplicate check entirely,
-so whatever it matched disappears with it.
+Hide items from being matched/compared by right-clicking it.  Hiding 1 item of a matched pair
+will remove both (but prevent only the selected one from future matches); if a matched set is 3+,
+then only the hidden item(s) stop matching until the last of a pair is hidden.  
+Un-hide an item by showing all hidden items in the config menu, then right-click and "Unhide item".
 
 `/dispeller config` opens the settings, as does the cog in the window's title bar and the
 gear beside the plugin in Dalamud's installer. From there the window can open with the
@@ -93,9 +84,8 @@ list hidden items again so they can be right-clicked back.
 
 ## AI usage declaration
 
-*Claude thought that this section would be useful. If anyone who knows what they're doing
-cares for the justifications behind why anything was changed the way they were, here you
-go.*
+*Claude thought that this section would be useful because of Dalamud's docs.  
+If anyone cares for that sort of thing, here you go.*
 
 ---
 
